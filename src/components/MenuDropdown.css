@@ -1,0 +1,101 @@
+.menu-dropdown {
+  position: relative;
+  display: inline-block;
+  z-index: 200;
+}
+
+.menu-button {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 8px;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(10px);
+}
+
+.menu-button:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: translateY(-1px);
+}
+
+.menu-button:active {
+  transform: translateY(0);
+}
+
+.menu-content {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 8px;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  min-width: 160px;
+  z-index: 9999;
+  overflow: hidden;
+  animation: menuFadeIn 0.2s ease-out;
+}
+
+@keyframes menuFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.menu-item {
+  width: 100%;
+  padding: 12px 16px;
+  border: none;
+  background: transparent;
+  color: #333;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background-color 0.2s ease;
+  text-align: left;
+}
+
+.menu-item:hover {
+  background: rgba(79, 70, 229, 0.1);
+  color: #4f46e5;
+}
+
+.menu-item:active {
+  background: rgba(79, 70, 229, 0.2);
+}
+
+.menu-item svg {
+  flex-shrink: 0;
+}
+
+.menu-item span {
+  white-space: nowrap;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .menu-content {
+    min-width: 140px;
+  }
+  
+  .menu-item {
+    padding: 10px 14px;
+    font-size: 13px;
+  }
+}

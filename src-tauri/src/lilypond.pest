@@ -1,0 +1,216 @@
+// LilyPond Grammar for Pest Parser
+// Complete lexical and syntactic analysis approach
+
+WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
+COMMENT = _{ "%" ~ (!"\n" ~ ANY)* }
+
+// Basic lexical tokens (based on lexer.ll)
+letter = _{ 'a'..'z' | 'A'..'Z' | '\u{0080}'..'\u{FFFF}' }
+digit = _{ '0'..'9' }
+
+// Numbers and fractions
+unsigned = @{ digit+ }
+fraction = @{ digit+ ~ "/" ~ digit+ }
+int = @{ "-"? ~ unsigned }
+real = @{ (int ~ "." ~ digit*) | ("-"? ~ "." ~ digit+) }
+
+// Identifiers and symbols
+symbol = @{ letter ~ (("-" | "_")? ~ letter | letter)* }
+identifier = @{ symbol }
+command = @{ "\\" ~ symbol }
+string_literal = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+
+// Special LilyPond literals
+boolean_literal = @{ "##t" | "##f" }
+markup_null = { "\\markup" ~ "\\null" }
+property_reference = @{ "#'" ~ identifier ~ (":" ~ identifier)* }
+unit_literal = @{ real ~ "\\" ~ identifier }
+
+// Version directive
+version = { "\\version" ~ string_literal }
+
+// Commands and directives
+simple_command = { "\\" ~ identifier }
+scheme_code = { "#(" ~ (!")" ~ ANY)* ~ ")" }
+include_directive = { "\\include" ~ string_literal }
+
+// Additional LilyPond commands
+pointandclickoff = { "\\pointAndClickOff" }
+numerictime = { "\\numericTimeSignature" }
+break_command = { "\\break" }
+bar_number_check = { "\\barNumberCheck" ~ "#" ~ unsigned }
+arpeggio = { "\\arpeggio" }
+bar_command = { "\\bar" ~ string_literal }
+
+// Modal transpose and other transformations
+// Format: \modalTranspose from_pitch to_pitch scale_ref music_expr
+modal_transpose_pitch = @{ note_name ~ octave_modifier? }
+modal_transpose = { "\\modalTranspose" ~ modal_transpose_pitch ~ modal_transpose_pitch ~ variable_reference ~ variable_reference }
+
+// Comments in music (line number markers like "| % 1")
+music_comment = { "|" ~ "%" ~ unsigned }
+
+// Override commands
+override_command = { "\\override" ~ identifier ~ "." ~ identifier ~ "." ~ identifier ~ "=" ~ string_literal }
+set_command = { "\\set" ~ identifier ~ "." ~ identifier ~ "=" ~ string_literal }
+
+// Merge commands
+merge_command = { "\\mergeDifferentlyDottedOn" | "\\mergeDifferentlyHeadedOn" }
+
+// Parentheses and grouping
+parentheses = { "(" ~ music_sequence ~ ")" }
+// Angle brackets for chords - more flexible to handle any content including duration
+angle_brackets = { "<" ~ (!">" ~ ANY)* ~ ">" ~ duration? }
+
+// Helper for nested braces content
+nested_braces = { "{" ~ (nested_braces | (!"}" ~ ANY))* ~ "}" }
+braced_content = { (nested_braces | (!"}" ~ ANY))* }
+
+// Paper block - handles nested braces
+paper_block = { "\\paper" ~ "{" ~ braced_content ~ "}" }
+
+// Markup expressions with nested braces
+markup_expression = { "\\markup" ~ nested_braces }
+fromproperty = { "\\fromproperty" ~ property_reference }
+fill_line = { "\\fill-line" ~ nested_braces }
+
+// Variable definitions and references
+variable_name = @{ (letter | digit | "_")+ }
+variable_reference = { "\\" ~ variable_name }
+variable_value = { music_mode | variable_reference | string_literal | real | unsigned }
+variable_definition = { variable_name ~ "=" ~ variable_value }
+
+// Header block with proper parsing
+header_item = { identifier ~ "=" ~ string_literal }
+header = { "\\header" ~ "{" ~ header_item* ~ "}" }
+
+// Musical elements - detailed parsing
+
+// Key signature
+key_note = @{ ("c" | "d" | "e" | "f" | "g" | "a" | "b") ~ ("is" | "es")? }
+key_mode = @{ "\\major" | "\\minor" }
+key_signature = { "\\key" ~ key_note ~ key_mode }
+
+// Time signature
+time_signature = { "\\time" ~ (fraction | (unsigned ~ "/" ~ unsigned)) }
+
+// Clef
+clef_type = @{ "treble" | "bass" | "alto" | "tenor" | "percussion" | "tab" }
+clef = { "\\clef" ~ (string_literal | clef_type | identifier) }
+
+// Ottava (octave transposition)
+// Format: \ottava #n where n is the octave offset (0, 1, -1, 2, -2, etc.)
+ottava = { "\\ottava" ~ "#" ~ int }
+
+// Note components with precise parsing
+note_name = @{ ("c" | "d" | "e" | "f" | "g" | "a" | "b") ~ ("is" | "es")? }
+octave_modifier = @{ ("'" | ",")* }
+duration_number = @{ "128" | "64" | "32" | "16" | "8" | "4" | "2" | "1" }
+duration_dots = @{ "."* }
+duration = { duration_number ~ duration_dots }
+
+// Musical note
+musical_note = { note_name ~ octave_modifier ~ duration? }
+
+// Rest
+rest_name = @{ "r" | "s" }
+rest = { rest_name ~ duration? }
+
+// Bar lines
+bar_line = { "|" }
+double_bar = { "||" }
+final_bar = { "|." }
+
+// Tempo markings
+tempo = { "\\tempo" ~ (string_literal | (duration ~ "=" ~ unsigned)) }
+
+// Articulations and dynamics
+articulation = @{ ">" | "^" | "_" | "." | "-" | "+" | "!" }
+dynamic = @{ "\\pp" | "\\p" | "\\mp" | "\\mf" | "\\f" | "\\ff" | "\\fff" | "\\ppp" }
+
+// Basic music items (no modes to avoid circular reference)
+basic_music_item = { 
+    modal_transpose |
+    musical_note | rest | bar_line | double_bar | final_bar |
+    key_signature | time_signature | clef | tempo | ottava |
+    articulation | dynamic | break_command | bar_number_check | 
+    arpeggio | bar_command | parentheses | angle_brackets |
+    pointandclickoff | numerictime | music_comment |
+    new_voice  | new_lyrics | override_command | set_command | merge_command |
+    variable_reference
+}
+
+// Basic music sequence
+basic_music_sequence = { basic_music_item* }
+
+// Lyrics - support Unicode characters for international text
+// Single character or sequence of ASCII letters/digits/punctuation
+lyric_syllable = @{ (letter | digit | "-" | "_")+ | '\u{0080}'..'\u{FFFF}' }
+lyric_extender = @{ "__" }
+lyric_hyphen = @{ "--" }
+lyric_item = { lyric_extender | lyric_hyphen | lyric_syllable }
+// Lyric sequence - more flexible, just skip everything until closing brace
+lyric_sequence = { (!"}" ~ ANY)* }
+
+// Music modes and transformations
+fixed_reference = { note_name ~ octave_modifier }
+relative_reference = { note_name ~ octave_modifier }
+
+fixed_mode = { "\\fixed" ~ fixed_reference ~ "{" ~ basic_music_sequence ~ "}" }
+relative_mode = { "\\relative" ~ relative_reference? ~ "{" ~ basic_music_sequence ~ "}" }
+absolute_mode = { "\\absolute" ~ "{" ~ basic_music_sequence ~ "}" }
+lyricmode = { "\\lyricmode" ~ "{" ~ lyric_sequence ~ "}" }
+
+// Enhanced music expression to include modes
+music_mode = { fixed_mode | relative_mode | absolute_mode | lyricmode }
+
+// Full music item including modes
+music_item = { basic_music_item | music_mode }
+
+// Music sequence - properly parsed sequence of music items
+music_sequence = { music_item* }
+
+// New staff/voice commands - support both Staff and Voice
+context_type = @{ "Staff" | "Voice" | "PianoStaff" | "ChoirStaff" | "GrandStaff" | "StaffGroup" }
+new_context = { "\\new" ~ context_type ~ ("=" ~ (identifier | string_literal))? }
+new_voice = { "\\new" ~ "Voice" ~ ("=" ~ (identifier | string_literal))? ~ (simple_staff | variable_reference) }
+new_lyrics = { "\\new" ~ "Lyrics" ~ ("=" ~ (identifier | string_literal))? ~ ("\\lyricsto" ~ string_literal ~ ("{" ~ lyric_sequence ~ "}" | variable_reference))? }
+lyricsto = { "\\lyricsto" ~ string_literal }
+addlyrics = { "\\addlyrics" ~ "{" ~ lyric_sequence ~ "}" }
+
+// Staff directives
+staff_directive = { clef | key_signature | time_signature | tempo  }
+
+// Staff and Voice content - structured parsing instead of raw capture
+staff_body = { staff_directive* ~ music_sequence }
+staff = { "\\new" ~ "Staff" ~ ("=" ~ (identifier | string_literal))? ~ "{" ~ staff_body ~ "}" }
+simple_staff = { "{" ~ staff_body ~ "}" }
+
+// Score structure
+layout_block = { "\\layout" ~ "{" ~ (!"}" ~ ANY)* ~ "}" }
+midi_block = { "\\midi" ~ "{" ~ (!"}" ~ ANY)* ~ "}" }
+
+// Simultaneous music (parallel staves)
+simultaneous_music = { "<<" ~ (staff | simple_staff | music_mode | new_lyrics)* ~ ">>" }
+
+// Piano staff - contains simultaneous music
+piano_staff = { "\\new" ~ "PianoStaff" ~ ("=" ~ (identifier | string_literal))? ~ simultaneous_music }
+
+// Score content with more options
+score_content = { 
+    piano_staff | staff | simple_staff | music_mode  | new_lyrics | simultaneous_music
+}
+score = { "\\score" ~ "{" ~ score_content ~ addlyrics* ~ layout_block? ~ midi_block? ~ "}" }
+
+// Book structures
+book_item = { score | header }
+book = { "\\book" ~ "{" ~ book_item* ~ "}" }
+bookpart = { "\\bookpart" ~ "{" ~ book_item* ~ "}" }
+
+// Top level structure
+top_level_item = { 
+    paper_block | version | header | score | book | bookpart | music_mode | 
+    include_directive | variable_definition | scheme_code | 
+    pointandclickoff | simple_command
+}
+lilypond_file = { SOI ~ top_level_item* ~ EOI }
