@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import { Play, Pause, Square, Music, Upload, Volume2 } from 'lucide-react';
+import { Play, Pause, Square, Music, Upload, Volume2, Download, Loader } from 'lucide-react';
 import MusicNotation from './components/MusicNotation';
 import AudioPlayer, { INSTRUMENT_SAMPLES } from './components/AudioPlayer';
 import MenuDropdown from './components/MenuDropdown';
 import SettingsDialog from './components/SettingsDialog';
+import ExportDropdown from './components/ExportDropdown';
 import './App.css';
 
 type NoteType = 'Default' | 'Clef' | 'Chord' | 'Time';
@@ -44,9 +45,12 @@ function App() {
   const [currentNoteIndices, setCurrentNoteIndices] = useState<Map<number, number>>(new Map());
   const [lilypondContent, setLilypondContent] = useState('');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isExportDropdownOpen, setIsExportDropdownOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [measuresPerRow, setMeasuresPerRow] = useState(2);
   const [selectedInstrument, setSelectedInstrument] = useState('piano');
   const audioPlayerRef = useRef<any>(null);
+  const exportButtonRef = useRef<HTMLDivElement>(null);
 
   // Get available instruments from AudioPlayer's INSTRUMENT_SAMPLES
   const availableInstruments = Object.keys(INSTRUMENT_SAMPLES);
@@ -154,6 +158,29 @@ function App() {
     }
   };
 
+  const handleExportClick = () => {
+    setIsExportDropdownOpen(!isExportDropdownOpen);
+  };
+
+  const handleExport = async (format: 'mp3' | 'wav' | 'midi') => {
+    try {
+      setIsExporting(true);
+      if (audioPlayerRef.current) {
+        await audioPlayerRef.current.export(format);
+      }
+      setIsExportDropdownOpen(false);
+    } catch (error) {
+      console.error('Export failed:', error);
+      alert('导出失败，请重试');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleExportClose = () => {
+    setIsExportDropdownOpen(false);
+  };
+
   const handleNoteProgress = (staffIndex: number, noteIndex: number) => {
     setCurrentNoteIndices(prev => {
       const newMap = new Map(prev);
@@ -244,7 +271,7 @@ function App() {
                     value={selectedInstrument} 
                     onChange={(e) => setSelectedInstrument(e.target.value)}
                     className="instrument-select"
-                    disabled={isPlaying}
+                    disabled={isPlaying || isExporting}
                   >
                     {availableInstruments.map(instrument => (
                       <option key={instrument} value={instrument}>
@@ -257,7 +284,7 @@ function App() {
               <div className="controls-right">
                 <button 
                   onClick={handlePlay} 
-                  disabled={isPlaying}
+                  disabled={isPlaying || isExporting}
                   className="btn btn-play"
                 >
                   <Play size={20} />
@@ -278,6 +305,26 @@ function App() {
                   <Square size={20} />
                   Stop
                 </button>
+                <div className="export-button-wrapper" ref={exportButtonRef}>
+                  <button 
+                    onClick={handleExportClick}
+                    disabled={isExporting}
+                    className="btn btn-export"
+                  >
+                    {isExporting ? (
+                      <Loader size={20} className="icon-spinning" />
+                    ) : (
+                      <Download size={20} />
+                    )}
+                    Export
+                  </button>
+                  <ExportDropdown
+                    isOpen={isExportDropdownOpen}
+                    isExporting={isExporting}
+                    onExport={handleExport}
+                    onClose={handleExportClose}
+                  />
+                </div>
               </div>
             </div>
 

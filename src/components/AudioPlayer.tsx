@@ -1,5 +1,6 @@
-import React, { useImperativeHandle, forwardRef, useRef, useEffect } from 'react';
+import { useImperativeHandle, forwardRef, useRef, useEffect } from 'react';
 import * as Tone from 'tone';
+import { Midi } from '@tonejs/midi';
 
 // Instrument sample mappings - Complete list from tonejs-instruments
 export const INSTRUMENT_SAMPLES = {
@@ -158,6 +159,7 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
   const isPausedRef = useRef(false);
   const isInitializedRef = useRef(false);
   const currentNoteIndicesRef = useRef<Map<number, number>>(new Map());
+  const recorderRef = useRef<Tone.Recorder | null>(null);
 
 
 
@@ -340,6 +342,295 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
     }
   };
 
+  const exportAudio = async (format: 'wav' | 'mp3', filename?: string) => {
+    try {
+      if (Tone.context.state !== 'running') {
+        await Tone.start();
+      }
+
+      // Create a new recorder connected to the destination
+      const recorder = new Tone.Recorder();
+      Tone.Destination.connect(recorder);
+      recorderRef.current = recorder;
+
+      // Start recording
+      recorder.start();
+
+      // Clear existing events
+      scheduledEventsRef.current.forEach(id => Tone.Transport.clear(id));
+      scheduledEventsRef.current = [];
+      Tone.Transport.cancel();
+      Tone.Transport.stop();
+      Tone.Transport.position = 0;
+
+      // Initialize current note indices
+      currentNoteIndicesRef.current.clear();
+
+      // Determine which data structure to use
+      const hasStaves = staves && staves.length > 0;
+      const hasNotes = notes && notes.length > 0;
+      let totalDuration = 0;
+
+      if (hasStaves) {
+        // Play multiple staves simultaneously
+        const synthPromises = staves!.map(async (staff, staffIndex) => {
+          if (!staff.notes || staff.notes.length === 0) return null;
+          const synth = await createSynthForStaff(staffIndex);
+          return { staff, staffIndex, synth };
+        });
+
+        const loadedStaves = await Promise.all(synthPromises);
+        
+        loadedStaves.forEach((staffData) => {
+          if (!staffData) return;
+          const { staff, synth } = staffData;
+          let transportTime = 0;
+
+          if (!staff.notes) return;
+          staff.notes.forEach((note) => {
+            const toneNote = convertLilyPondToTone(note);
+            const noteDuration = getDurationInSeconds(note.duration, note.dots);
+
+            // Schedule note playback (skip rests)
+            if (toneNote !== null) {
+              const noteEventId = Tone.Transport.schedule((time) => {
+                playNote(synth, toneNote, noteDuration, time);
+              }, transportTime);
+              scheduledEventsRef.current.push(noteEventId);
+            }
+
+            transportTime += noteDuration;
+          });
+
+          totalDuration = Math.max(totalDuration, transportTime);
+        });
+      } else if (hasNotes) {
+        // Fallback: play single staff (backward compatibility)
+        const synth = await createSynthForStaff(0);
+        let transportTime = 0;
+
+        notes!.forEach((note) => {
+          const toneNote = convertLilyPondToTone(note);
+          const noteDuration = getDurationInSeconds(note.duration, note.dots);
+
+          // Schedule note playback (skip rests)
+          if (toneNote !== null) {
+            const noteEventId = Tone.Transport.schedule((time) => {
+              playNote(synth, toneNote, noteDuration, time);
+            }, transportTime);
+            scheduledEventsRef.current.push(noteEventId);
+          }
+
+          transportTime += noteDuration;
+        });
+
+        totalDuration = transportTime;
+      }
+
+      // Start playback
+      Tone.Transport.start();
+
+      // Wait for playback to complete
+      await new Promise(resolve => {
+        setTimeout(resolve, (totalDuration + 0.5) * 1000);
+      });
+
+      // Stop transport
+      Tone.Transport.stop();
+      Tone.Transport.cancel();
+      Tone.Transport.position = 0;
+
+      // Stop recording and get the audio
+      const audio = await recorder.stop();
+
+      // Disconnect recorder
+      Tone.Destination.disconnect(recorder);
+
+      // Create a blob and download
+      const mimeType = format === 'mp3' ? 'audio/mpeg' : 'audio/wav';
+      const extension = format === 'mp3' ? 'mp3' : 'wav';
+      const blob = new Blob([audio], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename || `music-${selectedInstrument}-${Date.now()}.${extension}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      console.log(`Audio exported as ${format.toUpperCase()} successfully`);
+    } catch (error) {
+      console.error('Error exporting audio:', error);
+      throw error;
+    }
+  };
+
+  const exportMidi = async (filename?: string) => {
+    try {
+      // Create a new MIDI file
+      const midi = new Midi();
+      midi.header.setTempo(120);
+
+      // Determine which data structure to use
+      const hasStaves = staves && staves.length > 0;
+      const hasNotes = notes && notes.length > 0;
+
+      // Helper function to convert note name to MIDI note number
+      const noteNameToMidi = (noteName: string): number => {
+        const noteMap: { [key: string]: number } = {
+          'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11
+        };
+        
+        const match = noteName.match(/([A-G])#?b?(\d+)/);
+        if (!match) return 60; // Default to middle C
+        
+        const noteLetter = match[1];
+        const octave = parseInt(match[2]);
+        let semitone = noteMap[noteLetter] || 0;
+        
+        if (noteName.includes('#')) semitone += 1;
+        if (noteName.includes('b')) semitone -= 1;
+        
+        return (octave + 1) * 12 + semitone;
+      };
+
+      // Helper function to convert duration to seconds
+      const durationToSeconds = (duration: string, dots?: string): number => {
+        const durationMap: { [key: string]: number } = {
+          '1': 2.0,   // Whole note
+          '2': 1.0,   // Half note
+          '4': 0.5,   // Quarter note
+          '8': 0.25,  // Eighth note
+          '16': 0.125 // Sixteenth note
+        };
+
+        let baseDuration = durationMap[duration] || 0.5;
+        
+        // Apply dots
+        if (dots && dots.length > 0) {
+          let multiplier = 1.0;
+          let addedDuration = baseDuration / 2;
+          for (let i = 0; i < dots.length; i++) {
+            multiplier += addedDuration / baseDuration;
+            addedDuration /= 2;
+          }
+          baseDuration *= multiplier;
+        }
+        
+        return baseDuration;
+      };
+
+      if (hasStaves) {
+        // Process all staves - each staff gets its own track
+        staves!.forEach((staff, staffIndex) => {
+          if (!staff.notes || staff.notes.length === 0) return;
+
+          // Create a new track for each staff
+          const track = midi.addTrack();
+          
+          // Set track name if available
+          if (staff.name) {
+            track.name = staff.name;
+          }
+
+          let currentTime = 0;
+          staff.notes.forEach((note) => {
+            // Skip non-playable notes
+            if (note.note_type === 'Clef' || note.note_type === 'Time' || note.pitch === 'r') {
+              const duration = durationToSeconds(note.duration, note.dots);
+              currentTime += duration;
+              return;
+            }
+
+            const toneNote = convertLilyPondToTone(note);
+            const duration = durationToSeconds(note.duration, note.dots);
+
+            if (Array.isArray(toneNote)) {
+              // Chord: add all notes
+              toneNote.forEach(pitch => {
+                const midiNote = noteNameToMidi(pitch);
+                track.addNote({
+                  midi: midiNote,
+                  time: currentTime,
+                  duration: duration,
+                  velocity: 0.8
+                });
+              });
+            } else if (toneNote) {
+              // Single note
+              const midiNote = noteNameToMidi(toneNote);
+              track.addNote({
+                midi: midiNote,
+                time: currentTime,
+                duration: duration,
+                velocity: 0.8
+              });
+            }
+
+            currentTime += duration;
+          });
+        });
+      } else if (hasNotes) {
+        // Process single staff
+        const track = midi.addTrack();
+        let currentTime = 0;
+        notes!.forEach((note) => {
+          // Skip non-playable notes
+          if (note.note_type === 'Clef' || note.note_type === 'Time' || note.pitch === 'r') {
+            const duration = durationToSeconds(note.duration, note.dots);
+            currentTime += duration;
+            return;
+          }
+
+          const toneNote = convertLilyPondToTone(note);
+          const duration = durationToSeconds(note.duration, note.dots);
+
+          if (Array.isArray(toneNote)) {
+            // Chord: add all notes
+            toneNote.forEach(pitch => {
+              const midiNote = noteNameToMidi(pitch);
+              track.addNote({
+                midi: midiNote,
+                time: currentTime,
+                duration: duration,
+                velocity: 0.8
+              });
+            });
+          } else if (toneNote) {
+            // Single note
+            const midiNote = noteNameToMidi(toneNote);
+            track.addNote({
+              midi: midiNote,
+              time: currentTime,
+              duration: duration,
+              velocity: 0.8
+            });
+          }
+
+          currentTime += duration;
+        });
+      }
+
+      // Generate MIDI data and download
+      const midiData = midi.toArray();
+      const blob = new Blob([new Uint8Array(midiData)], { type: 'audio/midi' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename || `music-${selectedInstrument}-${Date.now()}.mid`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      console.log('MIDI exported successfully');
+    } catch (error) {
+      console.error('Error exporting MIDI:', error);
+      throw error;
+    }
+  };
+
   useImperativeHandle(ref, () => ({
     play: async () => {
       if (isPlayingRef.current) return;
@@ -389,9 +680,10 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
           
           loadedStaves.forEach((staffData) => {
             if (!staffData) return;
-            const { staff, staffIndex, synth } = staffData;
+            const { staff, synth } = staffData;
             let transportTime = 0;
 
+            if (!staff.notes) return;
             staff.notes.forEach((note, noteIndex) => {
               const toneNote = convertLilyPondToTone(note);
               const noteDuration = getDurationInSeconds(note.duration, note.dots);
@@ -549,6 +841,19 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
       }
 
       onPlaybackEnd();
+    },
+
+    export: async (format: 'wav' | 'mp3' | 'midi' = 'wav', filename?: string) => {
+      try {
+        if (format === 'midi') {
+          return await exportMidi(filename);
+        } else {
+          return await exportAudio(format, filename);
+        }
+      } catch (error) {
+        console.error('Error exporting:', error);
+        throw error;
+      }
     }
   }));
 
