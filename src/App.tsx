@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import { Play, Pause, Square, Music, Upload, Volume2, Download, Loader } from 'lucide-react';
+import { Play, Pause, Square, Music, Upload, Download, Loader } from 'lucide-react';
 import MusicNotation from './components/MusicNotation';
 import AudioPlayer, { INSTRUMENT_SAMPLES } from './components/AudioPlayer';
 import MenuDropdown from './components/MenuDropdown';
@@ -54,6 +54,8 @@ function App() {
   const [selectedInstrument, setSelectedInstrument] = useState(() => {
     return localStorage.getItem('selectedInstrument') || 'piano';
   });
+  const [staffInstruments, setStaffInstruments] = useState<Map<number, string>>(new Map());
+  const [staffVolumes, setStaffVolumes] = useState<Map<number, boolean>>(new Map());
   const audioPlayerRef = useRef<any>(null);
   const exportButtonRef = useRef<HTMLDivElement>(null);
 
@@ -85,6 +87,16 @@ function App() {
             }
           }
         });
+        
+        // Initialize staff instruments and volumes
+        const newStaffInstruments = new Map<number, string>();
+        const newStaffVolumes = new Map<number, boolean>();
+        parsed.staves.forEach((_, staffIndex) => {
+          newStaffInstruments.set(staffIndex, selectedInstrument);
+          newStaffVolumes.set(staffIndex, true);
+        });
+        setStaffInstruments(newStaffInstruments);
+        setStaffVolumes(newStaffVolumes);
       } else if (parsed?.notes && parsed.notes.length > 0) {
         // Find the first note that is not a Clef or Time marker
         const firstRealNoteIndex = parsed.notes.findIndex(
@@ -119,13 +131,25 @@ function App() {
         if (parsed?.staves && parsed.staves.length > 0) {
           parsed.staves.forEach((staff, staffIndex) => {
             // Find the first note that is not a Clef or Time marker
-            const firstRealNoteIndex = staff.notes.findIndex(
-              note => note.note_type !== 'Clef' && note.note_type !== 'Time'
-            );
-            if (firstRealNoteIndex !== -1) {
-              initialIndices.set(staffIndex, firstRealNoteIndex);
+            if (staff.notes && staff.notes.length > 0) {
+              const firstRealNoteIndex = staff.notes.findIndex(
+                note => note.note_type !== 'Clef' && note.note_type !== 'Time'
+              );
+              if (firstRealNoteIndex !== -1) {
+                initialIndices.set(staffIndex, firstRealNoteIndex);
+              }
             }
           });
+          
+          // Initialize staff instruments and volumes
+          const newStaffInstruments = new Map<number, string>();
+          const newStaffVolumes = new Map<number, boolean>();
+          parsed.staves.forEach((_, staffIndex) => {
+            newStaffInstruments.set(staffIndex, selectedInstrument);
+            newStaffVolumes.set(staffIndex, true);
+          });
+          setStaffInstruments(newStaffInstruments);
+          setStaffVolumes(newStaffVolumes);
         } else if (parsed?.notes && parsed.notes.length > 0) {
           // Find the first note that is not a Clef or Time marker
           const firstRealNoteIndex = parsed.notes.findIndex(
@@ -280,22 +304,67 @@ function App() {
 
             <div className="controls">
               <div className="controls-left">
-                <div className="instrument-control">
-                  <label htmlFor="instrumentSelect">乐器:</label>
-                  <select 
-                    id="instrumentSelect"
-                    value={selectedInstrument} 
-                    onChange={(e) => setSelectedInstrument(e.target.value)}
-                    className="instrument-select"
-                    disabled={isPlaying || isExporting}
-                  >
-                    {availableInstruments.map(instrument => (
-                      <option key={instrument} value={instrument}>
-                        {instrument.charAt(0).toUpperCase() + instrument.slice(1).replace('-', ' ')}
-                      </option>
+                {musicData?.staves && musicData.staves.length > 0 ? (
+                  <div className="staff-controls-container">
+                    {musicData.staves.map((staff, staffIndex) => (
+                      <div key={staffIndex} className="staff-control-row">
+                        <div className="instrument-control">
+                          <label htmlFor={`instrumentSelect-${staffIndex}`}>
+                            {staff.name || `Staff ${staffIndex + 1}`}:
+                          </label>
+                          <select 
+                            id={`instrumentSelect-${staffIndex}`}
+                            value={staffInstruments.get(staffIndex) || selectedInstrument} 
+                            onChange={(e) => {
+                              const newInstruments = new Map(staffInstruments);
+                              newInstruments.set(staffIndex, e.target.value);
+                              setStaffInstruments(newInstruments);
+                            }}
+                            className="instrument-select"
+                            disabled={isPlaying || isExporting}
+                          >
+                            {availableInstruments.map(instrument => (
+                              <option key={instrument} value={instrument}>
+                                {instrument.charAt(0).toUpperCase() + instrument.slice(1).replace('-', ' ')}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="volume-toggle">
+                          <button
+                            onClick={() => {
+                              const newVolumes = new Map(staffVolumes);
+                              newVolumes.set(staffIndex, !newVolumes.get(staffIndex));
+                              setStaffVolumes(newVolumes);
+                            }}
+                            className={`volume-switch ${staffVolumes.get(staffIndex) ? 'volume-on' : 'volume-off'}`}
+                            disabled={isPlaying || isExporting}
+                            title={staffVolumes.get(staffIndex) ? '音量开启' : '音量关闭'}
+                          >
+                            <span className="volume-switch-slider"></span>
+                          </button>
+                        </div>
+                      </div>
                     ))}
-                  </select>
-                </div>
+                  </div>
+                ) : (
+                  <div className="instrument-control">
+                    <label htmlFor="instrumentSelect">乐器:</label>
+                    <select 
+                      id="instrumentSelect"
+                      value={selectedInstrument} 
+                      onChange={(e) => setSelectedInstrument(e.target.value)}
+                      className="instrument-select"
+                      disabled={isPlaying || isExporting}
+                    >
+                      {availableInstruments.map(instrument => (
+                        <option key={instrument} value={instrument}>
+                          {instrument.charAt(0).toUpperCase() + instrument.slice(1).replace('-', ' ')}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
               <div className="controls-right">
                 <button 
@@ -377,6 +446,8 @@ function App() {
               onNoteProgress={handleNoteProgress}
               onPlaybackEnd={handlePlaybackEnd}
               selectedInstrument={selectedInstrument}
+              staffInstruments={staffInstruments}
+              staffVolumes={staffVolumes}
             />
           </>
         ) : (

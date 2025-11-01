@@ -150,9 +150,11 @@ interface AudioPlayerProps {
   onNoteProgress: (staffIndex: number, noteIndex: number) => void;
   onPlaybackEnd: () => void;
   selectedInstrument?: string;
+  staffInstruments?: Map<number, string>;
+  staffVolumes?: Map<number, boolean>;
 }
 
-const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNoteProgress, onPlaybackEnd, selectedInstrument = 'piano' }, ref) => {
+const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNoteProgress, onPlaybackEnd, selectedInstrument = 'piano', staffInstruments = new Map(), staffVolumes = new Map() }, ref) => {
   const synthsRef = useRef<Map<number, Tone.Sampler | Tone.Synth>>(new Map());
   const isPlayingRef = useRef(false);
   const scheduledEventsRef = useRef<number[]>([]);
@@ -187,7 +189,7 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
     // Dispose old synths
     synthsRef.current.forEach(synth => synth.dispose());
     synthsRef.current.clear();
-  }, [notes, staves, selectedInstrument]);
+  }, [notes, staves, selectedInstrument, staffInstruments]);
 
   const convertLilyPondToTone = (note: LilyPondNote): string | string[] | null => {
     // Handle rest
@@ -267,8 +269,11 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
 
     let synth: Tone.Sampler | Tone.Synth;
 
+    // Get the instrument for this staff, or use the global selected instrument
+    const instrument = staffInstruments.get(staffIndex) || selectedInstrument;
+    
     // Check if we have samples for the selected instrument
-    const instrumentSamples = INSTRUMENT_SAMPLES[selectedInstrument as keyof typeof INSTRUMENT_SAMPLES];
+    const instrumentSamples = INSTRUMENT_SAMPLES[instrument as keyof typeof INSTRUMENT_SAMPLES];
     
     if (instrumentSamples) {
       try {
@@ -277,38 +282,38 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
           await Tone.start();
         }
         
-        console.log(`Loading ${selectedInstrument} samples...`);
+        console.log(`Loading ${instrument} samples for staff ${staffIndex}...`);
         
         // Create Tone.Sampler with the instrument samples
         synth = await new Promise<Tone.Sampler>((resolve, reject) => {
           const sampler = new Tone.Sampler({
             urls: instrumentSamples,
-            baseUrl: `/tonejs-instruments/samples/${selectedInstrument}/`,
+            baseUrl: `/tonejs-instruments/samples/${instrument}/`,
             onload: () => {
-              console.log(`${selectedInstrument} loaded successfully`);
+              console.log(`${instrument} loaded successfully for staff ${staffIndex}`);
               resolve(sampler);
             },
             onerror: (error) => {
-              console.error(`Error loading ${selectedInstrument}:`, error);
+              console.error(`Error loading ${instrument} for staff ${staffIndex}:`, error);
               reject(error);
             }
           }).toDestination();
           
           // Timeout fallback
           setTimeout(() => {
-            console.log(`${selectedInstrument} loaded via timeout fallback`);
+            console.log(`${instrument} loaded via timeout fallback for staff ${staffIndex}`);
             resolve(sampler);
           }, 5000);
         });
         
-        console.log(`Successfully created ${selectedInstrument} sampler`);
+        console.log(`Successfully created ${instrument} sampler for staff ${staffIndex}`);
       } catch (error) {
-        console.warn(`Failed to load instrument ${selectedInstrument}, falling back to synth:`, error);
+        console.warn(`Failed to load instrument ${instrument} for staff ${staffIndex}, falling back to synth:`, error);
         synth = createFallbackSynth();
       }
     } else {
       // Fallback to basic synth for unsupported instruments
-      console.log(`No samples available for ${selectedInstrument}, using fallback synth`);
+      console.log(`No samples available for ${instrument}, using fallback synth for staff ${staffIndex}`);
       synth = createFallbackSynth();
     }
 
@@ -330,7 +335,12 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
     }).toDestination();
   };
 
-  const playNote = (synth: Tone.Sampler | Tone.Synth, pitch: string | string[], duration: number, time: number) => {
+  const playNote = (synth: Tone.Sampler | Tone.Synth, pitch: string | string[], duration: number, time: number, volume: boolean = true) => {
+    // If volume is off, don't play the note
+    if (!volume) {
+      return;
+    }
+    
     if (Array.isArray(pitch)) {
       // Chord: play all notes simultaneously
       pitch.forEach(p => {
@@ -383,18 +393,24 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
         
         loadedStaves.forEach((staffData) => {
           if (!staffData) return;
-          const { staff, synth } = staffData;
+          const { staff, staffIndex, synth } = staffData;
           let transportTime = 0;
+          const staffVolume = staffVolumes.get(staffIndex) ?? true;
 
           if (!staff.notes) return;
           staff.notes.forEach((note) => {
+            // Skip non-playable notes
+            if (note.note_type === 'Clef' || note.note_type === 'Time') {
+              return;
+            }
+
             const toneNote = convertLilyPondToTone(note);
             const noteDuration = getDurationInSeconds(note.duration, note.dots);
 
-            // Schedule note playback (skip rests)
+            // Schedule note playback
             if (toneNote !== null) {
               const noteEventId = Tone.Transport.schedule((time) => {
-                playNote(synth, toneNote, noteDuration, time);
+                playNote(synth, toneNote, noteDuration, time, staffVolume);
               }, transportTime);
               scheduledEventsRef.current.push(noteEventId);
             }
@@ -408,15 +424,21 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
         // Fallback: play single staff (backward compatibility)
         const synth = await createSynthForStaff(0);
         let transportTime = 0;
+        const staffVolume = staffVolumes.get(0) ?? true;
 
         notes!.forEach((note) => {
+          // Skip non-playable notes
+          if (note.note_type === 'Clef' || note.note_type === 'Time') {
+            return;
+          }
+
           const toneNote = convertLilyPondToTone(note);
           const noteDuration = getDurationInSeconds(note.duration, note.dots);
 
-          // Schedule note playback (skip rests)
+          // Schedule note playback
           if (toneNote !== null) {
             const noteEventId = Tone.Transport.schedule((time) => {
-              playNote(synth, toneNote, noteDuration, time);
+              playNote(synth, toneNote, noteDuration, time, staffVolume);
             }, transportTime);
             scheduledEventsRef.current.push(noteEventId);
           }
@@ -502,7 +524,8 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
           '2': 1.0,   // Half note
           '4': 0.5,   // Quarter note
           '8': 0.25,  // Eighth note
-          '16': 0.125 // Sixteenth note
+          '16': 0.125, // Sixteenth note
+          '32': 0.0625 // Thirty-second note
         };
 
         let baseDuration = durationMap[duration] || 0.5;
@@ -534,10 +557,18 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
             track.name = staff.name;
           }
 
+          const staffVolume = staffVolumes.get(staffIndex) ?? true;
           let currentTime = 0;
           staff.notes.forEach((note) => {
             // Skip non-playable notes
             if (note.note_type === 'Clef' || note.note_type === 'Time' || note.pitch === 'r') {
+              const duration = durationToSeconds(note.duration, note.dots);
+              currentTime += duration;
+              return;
+            }
+
+            // Skip if volume is off
+            if (!staffVolume) {
               const duration = durationToSeconds(note.duration, note.dots);
               currentTime += duration;
               return;
@@ -574,10 +605,18 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
       } else if (hasNotes) {
         // Process single staff
         const track = midi.addTrack();
+        const staffVolume = staffVolumes.get(0) ?? true;
         let currentTime = 0;
         notes!.forEach((note) => {
           // Skip non-playable notes
           if (note.note_type === 'Clef' || note.note_type === 'Time' || note.pitch === 'r') {
+            const duration = durationToSeconds(note.duration, note.dots);
+            currentTime += duration;
+            return;
+          }
+
+          // Skip if volume is off
+          if (!staffVolume) {
             const duration = durationToSeconds(note.duration, note.dots);
             currentTime += duration;
             return;
@@ -682,17 +721,23 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
             if (!staffData) return;
             const { staff, staffIndex, synth } = staffData;
             let transportTime = 0;
+            const staffVolume = staffVolumes.get(staffIndex) ?? true;
 
             if (!staff.notes) return;
             staff.notes.forEach((note, noteIndex) => {
+              // Skip non-playable notes
+              if (note.note_type === 'Clef' || note.note_type === 'Time') {
+                return;
+              }
+
               const toneNote = convertLilyPondToTone(note);
               const noteDuration = getDurationInSeconds(note.duration, note.dots);
 
-              // Schedule note playback (skip rests)
+              // Schedule note playback
               if (toneNote !== null) {
                 const noteEventId = Tone.Transport.schedule((time) => {
                   if (!isPlayingRef.current) return;
-                  playNote(synth, toneNote, noteDuration, time);
+                  playNote(synth, toneNote, noteDuration, time, staffVolume);
                 }, transportTime);
                 scheduledEventsRef.current.push(noteEventId);
               }
@@ -740,16 +785,22 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
           currentNoteIndicesRef.current.set(0, firstRealNoteIndex !== -1 ? firstRealNoteIndex : 0);
           const synth = await createSynthForStaff(0);
           let transportTime = 0;
+          const staffVolume = staffVolumes.get(0) ?? true;
 
           notes!.forEach((note, noteIndex) => {
+            // Skip non-playable notes
+            if (note.note_type === 'Clef' || note.note_type === 'Time') {
+              return;
+            }
+
             const toneNote = convertLilyPondToTone(note);
             const noteDuration = getDurationInSeconds(note.duration, note.dots);
 
-            // Schedule note playback (skip rests)
+            // Schedule note playback
             if (toneNote !== null) {
               const noteEventId = Tone.Transport.schedule((time) => {
                 if (!isPlayingRef.current) return;
-                playNote(synth, toneNote, noteDuration, time);
+                playNote(synth, toneNote, noteDuration, time, staffVolume);
               }, transportTime);
               scheduledEventsRef.current.push(noteEventId);
             }
@@ -812,7 +863,7 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
       synthsRef.current.forEach(synth => {
         try {
           if (synth.triggerRelease) {
-            synth.triggerRelease();
+            synth.triggerRelease('+0');
           }
         } catch (error) {
           console.warn('Error stopping synth:', error);
