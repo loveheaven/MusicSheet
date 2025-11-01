@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Play, Pause, Square, Music, Upload, Volume2 } from 'lucide-react';
 import MusicNotation from './components/MusicNotation';
-import AudioPlayer from './components/AudioPlayer';
+import AudioPlayer, { INSTRUMENT_SAMPLES } from './components/AudioPlayer';
 import MenuDropdown from './components/MenuDropdown';
 import SettingsDialog from './components/SettingsDialog';
 import './App.css';
@@ -45,7 +45,11 @@ function App() {
   const [lilypondContent, setLilypondContent] = useState('');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [measuresPerRow, setMeasuresPerRow] = useState(2);
+  const [selectedInstrument, setSelectedInstrument] = useState('piano');
   const audioPlayerRef = useRef<any>(null);
+
+  // Get available instruments from AudioPlayer's INSTRUMENT_SAMPLES
+  const availableInstruments = Object.keys(INSTRUMENT_SAMPLES);
 
   const loadSampleMusic = async () => {
     try {
@@ -232,32 +236,48 @@ function App() {
             </div>
 
             <div className="controls">
-              <button 
-                onClick={handlePlay} 
-                disabled={isPlaying}
-                className="btn btn-play"
-              >
-                <Play size={20} />
-                Play
-              </button>
-              <button 
-                onClick={handlePause} 
-                disabled={!isPlaying}
-                className="btn btn-pause"
-              >
-                <Pause size={20} />
-                Pause
-              </button>
-              <button 
-                onClick={handleStop}
-                className="btn btn-stop"
-              >
-                <Square size={20} />
-                Stop
-              </button>
-              <div className="volume-control">
-                <Volume2 size={16} />
-                <span>Volume</span>
+              <div className="controls-left">
+                <div className="instrument-control">
+                  <label htmlFor="instrumentSelect">乐器:</label>
+                  <select 
+                    id="instrumentSelect"
+                    value={selectedInstrument} 
+                    onChange={(e) => setSelectedInstrument(e.target.value)}
+                    className="instrument-select"
+                    disabled={isPlaying}
+                  >
+                    {availableInstruments.map(instrument => (
+                      <option key={instrument} value={instrument}>
+                        {instrument.charAt(0).toUpperCase() + instrument.slice(1).replace('-', ' ')}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="controls-right">
+                <button 
+                  onClick={handlePlay} 
+                  disabled={isPlaying}
+                  className="btn btn-play"
+                >
+                  <Play size={20} />
+                  Play
+                </button>
+                <button 
+                  onClick={handlePause} 
+                  disabled={!isPlaying}
+                  className="btn btn-pause"
+                >
+                  <Pause size={20} />
+                  Pause
+                </button>
+                <button 
+                  onClick={handleStop}
+                  className="btn btn-stop"
+                >
+                  <Square size={20} />
+                  Stop
+                </button>
               </div>
             </div>
 
@@ -293,6 +313,7 @@ function App() {
               notes={musicData?.notes}
               onNoteProgress={handleNoteProgress}
               onPlaybackEnd={handlePlaybackEnd}
+              selectedInstrument={selectedInstrument}
             />
           </>
         ) : (
