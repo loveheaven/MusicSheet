@@ -680,7 +680,7 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
           
           loadedStaves.forEach((staffData) => {
             if (!staffData) return;
-            const { staff, synth } = staffData;
+            const { staff, staffIndex, synth } = staffData;
             let transportTime = 0;
 
             if (!staff.notes) return;
@@ -839,8 +839,6 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
         currentNoteIndicesRef.current.set(0, resetIndex);
         onNoteProgress(0, resetIndex);
       }
-
-      onPlaybackEnd();
     },
 
     export: async (format: 'wav' | 'mp3' | 'midi' = 'wav', filename?: string) => {

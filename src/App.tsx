@@ -47,8 +47,13 @@ function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isExportDropdownOpen, setIsExportDropdownOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
-  const [measuresPerRow, setMeasuresPerRow] = useState(2);
-  const [selectedInstrument, setSelectedInstrument] = useState('piano');
+  const [measuresPerRow, setMeasuresPerRow] = useState(() => {
+    const saved = localStorage.getItem('measuresPerRow');
+    return saved ? parseInt(saved, 10) : 2;
+  });
+  const [selectedInstrument, setSelectedInstrument] = useState(() => {
+    return localStorage.getItem('selectedInstrument') || 'piano';
+  });
   const audioPlayerRef = useRef<any>(null);
   const exportButtonRef = useRef<HTMLDivElement>(null);
 
@@ -154,7 +159,7 @@ function App() {
   const handleStop = () => {
     if (audioPlayerRef.current) {
       audioPlayerRef.current.stop();
-      // Don't set state here - let AudioPlayer handle it through callbacks
+      setIsPlaying(false);
     }
   };
 
@@ -191,7 +196,8 @@ function App() {
 
   const handlePlaybackEnd = () => {
     setIsPlaying(false);
-    setCurrentNoteIndices(new Map());
+    // Don't clear note indices here - let them stay on the first note
+    // They will be reset when playback starts again
   };
 
   const handleImportMusic = () => {
@@ -205,6 +211,16 @@ function App() {
   const handleCloseSettings = () => {
     setIsSettingsOpen(false);
   };
+
+  // Save measuresPerRow to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('measuresPerRow', measuresPerRow.toString());
+  }, [measuresPerRow]);
+
+  // Save selectedInstrument to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('selectedInstrument', selectedInstrument);
+  }, [selectedInstrument]);
 
   useEffect(() => {
     loadSampleMusic();
@@ -308,7 +324,7 @@ function App() {
                 <div className="export-button-wrapper" ref={exportButtonRef}>
                   <button 
                     onClick={handleExportClick}
-                    disabled={isExporting}
+                    disabled={isExporting || isPlaying}
                     className="btn btn-export"
                   >
                     {isExporting ? (
