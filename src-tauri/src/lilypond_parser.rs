@@ -1,7 +1,7 @@
 use pest::Parser;
 use pest_derive::Parser;
 use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
+use std::{collections::HashMap};
 
 #[derive(Parser)]
 #[grammar = "lilypond.pest"]
@@ -42,12 +42,24 @@ pub struct LilyPondNote {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LyricSyllable {
-    pub text: String,
-    pub is_extender: bool,
-    pub is_hyphen: bool,
+pub struct Lyric {
+    pub text_nodes: Vec<String>,
 }
-
+impl Lyric {
+    pub fn new(lyrics_text: String) -> Self {
+        Self { text_nodes: lyrics_text.split(&[' ', '\t', '\n'][..]).filter(|s| !s.is_empty()).map(|s| {
+            if s == "_" {
+                " ".to_string()
+            } else if s == "--" {
+                " ".to_string()
+            } else if s.contains('_') {
+                s.replace('_', " ")
+            } else {
+                s.to_string()
+            }
+        }).collect() }
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MusicMode {
     Absolute,
@@ -59,25 +71,27 @@ pub enum MusicMode {
 pub struct MusicContainerBase {
     pub name: Option<String>,
     pub clef: Option<String>,
+    pub time_signature: Option<String>,
     pub notes: Vec<LilyPondNote>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Variable {
     pub base: MusicContainerBase,
-    pub is_lyrics: bool,
+    pub lyric: Option<Lyric>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Voice {
     pub base: MusicContainerBase,
+    pub lyrics: Vec<Lyric>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Staff {
     #[serde(flatten)]
     pub base: MusicContainerBase,
-    pub lyrics: Vec<LyricSyllable>,
+    pub voices: Vec<Voice>,
 }
 
 impl Staff {
@@ -86,12 +100,20 @@ impl Staff {
             base: MusicContainerBase {
                 name,
                 clef: None,
+                time_signature: None,
                 notes: Vec::new(),
             },
-            lyrics: Vec::new(),
+            voices: Vec::new(),
         }
     }
 }
+
+impl Default for Staff {
+    fn default() -> Self {
+        Self::new(None)
+    }
+}
+
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ParsedMusic {
@@ -105,7 +127,7 @@ pub struct ParsedMusic {
     #[serde(skip)]
     pub variables: HashMap<String, Variable>,
     #[serde(skip)]
-    pub voices: HashMap<String, Voice>,
+    pub voices: HashMap<String, (usize, usize)>, // (staff_index, voice_index)
 }
 
 // API-friendly version for frontend (with simplified music_mode as string)
@@ -233,7 +255,6 @@ fn parse_score(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedMusic) -> R
     for inner_pair in pair.into_inner() {
         match inner_pair.as_rule() {
             Rule::score_content => parse_score_content(inner_pair, parsed)?,
-            Rule::addlyrics => parse_addlyrics(inner_pair, parsed)?,
             Rule::layout_block => {
                 // Skip layout block
             },
@@ -257,20 +278,16 @@ fn parse_score_content(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedMus
             },
             Rule::staff => {
                 // Create a new staff and parse into it
-                let mut staff = Staff::new(None);
-                parse_staff(inner_pair, parsed, &mut staff)?;
-                if !staff.base.notes.is_empty() {
-                    parsed.staves.push(staff);
-                }
+                let staff = Staff::new(None);
+                parsed.staves.push(staff);
+                parse_staff(inner_pair, parsed)?;
             },
             Rule::simple_staff => {
                 // Create a new staff and parse into it
-                let mut staff = Staff::new(None);
-                parse_simple_staff(inner_pair, parsed, &mut staff.base)?;
-                if !staff.base.notes.is_empty() {
-                    parsed.staves.push(staff);
-                }
-            },
+                let staff = Staff::new(None);
+                parsed.staves.push(staff);
+                parse_simple_staff(inner_pair, parsed)?;
+            },            
             Rule::music_mode => {
                 parse_music_mode_without_staff(inner_pair, parsed)?;
             },
@@ -288,6 +305,40 @@ fn parse_score_content(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedMus
             },
             Rule::variable_definition => {
                 // Skip variable definitions for now
+            },
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn parse_simultaneous_music(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedMusic) -> Result<(), String> {
+    // Parse parallel staves (<<...>>)
+    for inner_pair in pair.into_inner() {
+        match inner_pair.as_rule() {
+            Rule::staff => {
+                // Create a new staff and parse into it
+                let staff = Staff::new(None);
+                parsed.staves.push(staff);
+                parse_staff(inner_pair, parsed)?;
+                
+                
+                // if !staff.base.notes.is_empty() {
+                //     parsed.staves.push(staff);
+                // }
+            },
+            Rule::simple_staff => {
+                // Create a new staff and parse into it
+                let staff = Staff::new(None);
+                parsed.staves.push(staff);
+                parse_simple_staff(inner_pair, parsed)?;
+            },
+            Rule::music_mode => {
+                parse_music_mode_without_staff(inner_pair, parsed)?;
+            },
+            Rule::addlyrics => parse_addlyrics(inner_pair, parsed)?,
+            Rule::new_lyrics => {
+                parse_new_lyrics(inner_pair, parsed)?;
             },
             _ => {}
         }
@@ -361,11 +412,6 @@ fn parse_book_item(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedMusic) 
     Ok(())
 }
 
-fn parse_addlyrics(_pair: pest::iterators::Pair<Rule>, _parsed: &mut ParsedMusic) -> Result<(), String> {
-    // Skip addlyrics for now
-    Ok(())
-}
-
 fn parse_piano_staff(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedMusic) -> Result<(), String> {
     // Parse PianoStaff which contains simultaneous music
     for inner_pair in pair.into_inner() {
@@ -379,65 +425,60 @@ fn parse_piano_staff(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedMusic
     Ok(())
 }
 
-fn parse_simultaneous_music(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedMusic) -> Result<(), String> {
-    // Parse parallel staves (<<...>>)
-    for inner_pair in pair.into_inner() {
-        match inner_pair.as_rule() {
-            Rule::staff => {
-                // Create a new staff and parse into it
-                let mut staff = Staff::new(None);
-                parse_staff(inner_pair, parsed, &mut staff)?;
-                if !staff.base.notes.is_empty() {
-                    parsed.staves.push(staff);
-                }
-            },
-            Rule::simple_staff => {
-                // Create a new staff and parse into it
-                let mut staff = Staff::new(None);
-                parse_simple_staff(inner_pair, parsed, &mut staff.base)?;
-                if !staff.base.notes.is_empty() {
-                    parsed.staves.push(staff);
-                }
-            },
-            Rule::music_mode => {
-                parse_music_mode_without_staff(inner_pair, parsed)?;
-            },
-           
-            Rule::new_lyrics => {
-                // Skip new_lyrics for now
-            },
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
-fn parse_staff(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedMusic, staff: &mut Staff) -> Result<(), String> {
+fn parse_staff(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedMusic) -> Result<(), String> {
+    let mut staff_body_pair = None;
+    
     for inner_pair in pair.into_inner() {
         match inner_pair.as_rule() {
             Rule::identifier => {
                 // This is the staff name (e.g., "upper" in \new Staff = upper)
-                staff.base.name = Some(inner_pair.as_str().to_string());
+                if let Some(staff) = parsed.staves.last_mut() {
+                    staff.base.name = Some(inner_pair.as_str().to_string());
+                }
             },
             Rule::string_literal => {
                 // This is the staff name as a string literal
                 let s = inner_pair.as_str();
-                staff.base.name = Some(s[1..s.len()-1].to_string());
+                if let Some(staff) = parsed.staves.last_mut() {
+                    staff.base.name = Some(s[1..s.len()-1].to_string());
+                }
             },
-            Rule::staff_body => parse_staff_body(inner_pair, parsed, &mut staff.base)?,
+            Rule::staff_body => {
+                staff_body_pair = Some(inner_pair);
+            },
             _ => {}
         }
     }
+    
+    // Process staff_body after releasing the mutable borrow
+    if let Some(staff_body) = staff_body_pair {
+        let staff_idx = parsed.staves.len() - 1;
+        let base_ptr = &mut parsed.staves[staff_idx].base as *mut MusicContainerBase;
+        parse_staff_body(staff_body, parsed, unsafe { &mut *base_ptr })?;
+    }
+    
     Ok(())
 }
 
-fn parse_simple_staff(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedMusic, base: &mut MusicContainerBase) -> Result<(), String> {
+fn parse_simple_staff(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedMusic) -> Result<(), String> {
+    let mut staff_body_pair = None;
+    
     for inner_pair in pair.into_inner() {
         match inner_pair.as_rule() {
-            Rule::staff_body => parse_staff_body(inner_pair, parsed, base)?,
+            Rule::staff_body => {
+                staff_body_pair = Some(inner_pair);
+            },
             _ => {}
         }
     }
+    
+    // Process staff_body after releasing the mutable borrow
+    if let Some(staff_body) = staff_body_pair {
+        let staff_idx = parsed.staves.len() - 1;
+        let base_ptr = &mut parsed.staves[staff_idx].base as *mut MusicContainerBase;
+        parse_staff_body(staff_body, parsed, unsafe { &mut *base_ptr })?;
+    }
+    
     Ok(())
 }
 
@@ -448,7 +489,7 @@ fn parse_staff_body(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedMusic,
             Rule::music_sequence => {
                 let mut last_duration = "4".to_string();
                 let mut last_octave: i32  = 0; // Default octave for Absolute mode
-                parse_music_sequence(inner_pair, &mut base.notes,  parsed,&mut last_duration, &mut last_octave, OctaveMode::Absolute)?;
+                parse_music_sequence(inner_pair, &mut base.notes, parsed, &mut last_duration, &mut last_octave, OctaveMode::Absolute)?;
             },
             _ => {}
         }
@@ -467,6 +508,8 @@ fn parse_variable_definition(pair: pest::iterators::Pair<Rule>, parsed: &mut Par
     let mut var_name = String::new();
     let mut var_notes = Vec::new();
     let mut var_clef: Option<String> = None;
+    let mut var_time: Option<String> = None;
+    let mut var_lyric: Option<Lyric> = None;
     
     for inner_pair in pair.into_inner() {
         match inner_pair.as_rule() {
@@ -478,8 +521,11 @@ fn parse_variable_definition(pair: pest::iterators::Pair<Rule>, parsed: &mut Par
                 for value_pair in inner_pair.into_inner() {
                     match value_pair.as_rule() {
                         Rule::music_mode => {
-                            println!("[DEBUG] Variable {} contains music_mode", var_name);
+                            println!("[DEBUG] Variable {} contains music_mode ", var_name);
                             parse_music_mode(value_pair.clone(),&mut var_notes, parsed)?;
+                        },
+                        Rule::lyricmode => {
+                            var_lyric = parse_lyric_mode(value_pair.clone())?;
                         },
                         _ => {}
                     }
@@ -496,6 +542,12 @@ fn parse_variable_definition(pair: pest::iterators::Pair<Rule>, parsed: &mut Par
             break;
         }
     }
+    for note in &var_notes {
+        if note.note_type == NoteType::Time {
+            var_time = note.time_sig.clone();
+            break;
+        }
+    }
     
     // Store the variable with its notes
     if !var_name.is_empty() {
@@ -504,8 +556,9 @@ fn parse_variable_definition(pair: pest::iterators::Pair<Rule>, parsed: &mut Par
                 name: Some(var_name.clone()),
                 notes: var_notes.clone(),
                 clef: var_clef.clone(),
+                time_signature: var_time.clone(),
             },
-            is_lyrics: false,
+            lyric: var_lyric.clone(),
         };
         parsed.variables.insert(var_name.clone(), variable);
     }
@@ -597,7 +650,187 @@ fn parse_tempo(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedMusic) -> R
     Ok(())
 }
 
+fn parse_addlyrics(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedMusic) -> Result<(), String> {
+    let mut lyric: Option<Lyric> = None;
+    
+    for inner_pair in pair.into_inner() {
+        match inner_pair.as_rule() {
+            Rule::lyric_sequence => {
+                lyric = parse_lyric_sequence(inner_pair, parsed)?;
+            },
+            _ => {}
+        }
+    }
+    
+    if let Some(lyric) = lyric {
+        if !parsed.staves.is_empty() {
+            if let Some(last_voice) = parsed.staves.last_mut().and_then(|s| s.voices.last_mut()) {
+                last_voice.lyrics.push(lyric);
+            }
+        }
+    }
+    
+    Ok(())
+}
 
+fn parse_new_lyrics(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedMusic) -> Result<(), String> {
+    let mut lyric: Option<Lyric> = None;
+    let mut lyricsto_target: Option<String> = None;
+    
+    for inner_pair in pair.into_inner() {
+        match inner_pair.as_rule() {
+            Rule::string_literal => {
+                // let s = inner_pair.as_str();
+                // let content = s[1..s.len()-1].to_string();
+                // if lyricsto_target.is_none() {
+                //     lyricsto_target = Some(content);
+                // }
+            },
+            Rule::lyric_sequence => {
+                // Extract lyrics text from lyric_sequence
+                lyric = parse_lyric_sequence(inner_pair, parsed)?;
+            },
+            Rule::lyricsto => {
+                for lyricsto_pair in inner_pair.into_inner() {
+                    match lyricsto_pair.as_rule() {
+                        Rule::string_literal => {
+                            let s = lyricsto_pair.as_str();
+                            lyricsto_target = Some(s[1..s.len()-1].to_string());
+                        },
+                        _ => {}
+                    }
+                }
+            },
+            Rule::lyricmode => {
+                lyric = parse_lyric_mode(inner_pair)?;
+            },
+            Rule::variable_reference => {
+                let ref_str = inner_pair.as_str();
+                if ref_str.starts_with("\\") {
+                    let var_name = ref_str[1..].to_string();
+                    if let Some(variable) = parsed.variables.get(&var_name) {
+                        lyric = variable.lyric.clone();                       
+                    }
+                }
+            },
+            _ => {}
+        }
+    }
+    
+    if let Some(lyric) = lyric {
+        println!("DEBUG: lyric={:?}, lyricsto_target={:?}", lyric, lyricsto_target);
+        if let Some(target) = lyricsto_target {
+            if let Some(&(staff_idx, voice_idx)) = parsed.voices.get(&target) {
+                if let Some(staff) = parsed.staves.get_mut(staff_idx) {
+                    if let Some(voice) = staff.voices.get_mut(voice_idx) {
+                        voice.lyrics.push(lyric);
+                    }
+                }
+            }
+        } else {
+            if !parsed.staves.is_empty() {
+                if let Some(last_voice) = parsed.staves.last_mut().and_then(|s| s.voices.last_mut()) {
+                    last_voice.lyrics.push(lyric);
+                }
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+fn parse_lyric_sequence(pair: pest::iterators::Pair<Rule>,
+    parsed: &ParsedMusic) -> Result<Option<Lyric>, String> {
+    let mut lyrics_text = String::new();
+    
+    for lyric_item_pair in pair.into_inner() {
+        match lyric_item_pair.as_rule() {
+            Rule::lyric_item => {
+                for item in lyric_item_pair.into_inner() {
+                    match item.as_rule() {
+                        Rule::variable_reference => {
+                            let ref_str = item.as_str();
+                            if ref_str.starts_with("\\") {
+                                let var_name = ref_str[1..].to_string();
+                                if let Some(variable) = parsed.variables.get(&var_name) {
+                                    if let Some(var_lyric) = &variable.lyric {
+                                        return Ok(Some(var_lyric.clone()))
+                                    }
+                                }
+                            }
+                        },
+                        Rule::basic_lyric_item => {
+                            for basic_item in item.into_inner() {
+                                match basic_item.as_rule() {
+                                    Rule::lyric_text => {
+                                        if !lyrics_text.is_empty() {
+                                            lyrics_text.push(' ');
+                                        }
+                                        lyrics_text.push_str(basic_item.as_str());
+                                    },
+                                    Rule::set_command | Rule::override_command => {
+                                        // Ignore commands
+                                    },
+                                    _ => {}
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+            },
+            _ => {}
+        }
+    }
+    if !lyrics_text.is_empty() {
+        Ok(Some(Lyric::new(lyrics_text)))
+    } else {
+        Ok(None)
+    }
+}
+
+fn parse_lyric_mode(pair: pest::iterators::Pair<Rule>) -> Result<Option<Lyric>, String> {
+    let mut lyrics_text = String::new();
+    
+    for lyricmode_pair in pair.into_inner() {
+        match lyricmode_pair.as_rule() {
+            Rule::basic_lyric_sequence => {
+                // 遍历 basic_lyric_sequence 中的每个 basic_lyric_item
+                for basic_lyric_item_pair in lyricmode_pair.into_inner() {
+                    match basic_lyric_item_pair.as_rule() {
+                        Rule::basic_lyric_item => {
+                            // 遍历 basic_lyric_item 中的内容
+                            for lyric_item in basic_lyric_item_pair.into_inner() {
+                                match lyric_item.as_rule() {
+                                    Rule::lyric_text => {
+                                        // 普通歌词文本
+                                        lyrics_text.push_str(lyric_item.as_str());
+                                    },
+                                    Rule::set_command | Rule::override_command => {
+                                        // 命令 - 可以选择忽略或处理
+                                        // 这里选择忽略，只保留歌词文本
+                                    },
+                                    _ => {
+                                    }
+                                }
+                            }
+                        },
+                        _ => {
+                        }
+                    }
+                }
+            },
+            _ => {
+            }
+        }
+    }
+    
+    if !lyrics_text.is_empty() {
+        Ok(Some(Lyric::new(lyrics_text)))
+    } else {
+        Ok(None)
+    }
+}
 
 fn parse_music_sequence(pair: pest::iterators::Pair<Rule>, 
     notes: &mut Vec<LilyPondNote>, 
@@ -618,7 +851,10 @@ fn parse_music_sequence(pair: pest::iterators::Pair<Rule>,
                         Rule::music_mode => {
                             // Handle music_mode if needed
                             parse_music_mode(item, notes, parsed)?;
-                            
+                        },
+                        Rule::new_voice => {
+                            // Handle \new Voice = "name" { ... } or \new Voice = "name" \variableName
+                            parse_new_voice(item, notes, parsed, last_duration, last_octave, mode)?;
                         },
                         _ => {
                             println!("[parse_music_sequence] 跳过 music_item 内部规则: {:?}", item.as_rule());
@@ -664,7 +900,7 @@ fn parse_music_mode(pair: pest::iterators::Pair<Rule>,
         let mut found_mode = None;
         for inner in pair.into_inner() {
             match inner.as_rule() {
-                Rule::fixed_mode | Rule::relative_mode | Rule::absolute_mode | Rule::lyricmode=> {
+                Rule::fixed_mode | Rule::relative_mode | Rule::absolute_mode => {
                     let rule = inner.as_rule();
                     println!("[parse_music_mode] 在 music_mode 内找到实际模式: {:?}", rule);
                     found_mode = Some((rule, inner));
@@ -673,7 +909,7 @@ fn parse_music_mode(pair: pest::iterators::Pair<Rule>,
                 _ => {}
             }
         }
-        found_mode.ok_or_else(|| "No valid mode found inside music_mode".to_string())?
+        found_mode.ok_or_else(|| "No valid mode found inside music_mode ".to_string())?
     } else {
         (mode_type, pair)
     };
@@ -922,10 +1158,7 @@ fn parse_basic_music_item(pair: pest::iterators::Pair<Rule>,
             Rule::modal_transpose => {
                 parse_modal_transpose(inner_pair, notes, last_duration, parsed)?;
             },
-            Rule::new_voice => {
-                // Handle \new Voice = "name" { ... } or \new Voice = "name" \variableName
-                parse_new_voice(inner_pair, notes, parsed, last_duration, last_octave, mode)?;
-            },
+            
             Rule::arpeggio => {
                 // Handle \arpeggio - mark the last note as having an arpeggio
                 if let Some(last_note) = notes.last_mut() {
@@ -1479,7 +1712,7 @@ fn parse_modal_transpose(
 }
 
 fn parse_new_voice(pair: pest::iterators::Pair<Rule>, 
-    notes: &mut Vec<LilyPondNote>,
+    _notes: &mut Vec<LilyPondNote>,
     parsed: &mut ParsedMusic,
     _last_duration: &mut String,
     _last_octave: &mut i32,
@@ -1490,8 +1723,10 @@ fn parse_new_voice(pair: pest::iterators::Pair<Rule>,
         base: MusicContainerBase {
             name: None,
             clef: None,
+            time_signature: None,
             notes: Vec::new(),
         },
+        lyrics: Vec::new(),
     };
 
     for inner_pair in pair.into_inner() {
@@ -1509,7 +1744,12 @@ fn parse_new_voice(pair: pest::iterators::Pair<Rule>,
             },
             Rule::simple_staff => {
                 // Parse the voice body (which contains staff_body)
-                parse_simple_staff(inner_pair, parsed, &mut voice.base)?;
+                for staff_pair in inner_pair.into_inner() {
+                    match staff_pair.as_rule() {
+                        Rule::staff_body => parse_staff_body(staff_pair, parsed, &mut voice.base)?,
+                        _ => {}
+                    }
+                }
             },
             Rule::variable_reference => {
                 // Handle \variableName reference
@@ -1530,13 +1770,23 @@ fn parse_new_voice(pair: pest::iterators::Pair<Rule>,
             break;
         }
     }
-    if !voice.base.notes.is_empty() {
-        notes.extend(voice.base.notes.clone());
+    for note in &voice.base.notes {
+        if note.note_type == NoteType::Time {
+            voice.base.time_signature = note.time_sig.clone();
+            break;
+        }
     }
     
-    // Insert voice only if it has a name
-    if let Some(voice_name) = voice.base.name.clone() {
-        parsed.voices.insert(voice_name, voice);
+    let staff_idx = parsed.staves.len() - 1;
+    if let Some(last_staff) = parsed.staves.last_mut() {
+        last_staff.base.clef = voice.base.clef.clone();
+        last_staff.base.time_signature = voice.base.time_signature.clone();
+        last_staff.voices.push(voice);
+        let voice_idx = last_staff.voices.len() - 1;
+        // Insert voice index mapping only if it has a name
+        if let Some(voice_name) = last_staff.voices[voice_idx].base.name.clone() {
+            parsed.voices.insert(voice_name, (staff_idx, voice_idx));
+        }
     }
     
     Ok(())

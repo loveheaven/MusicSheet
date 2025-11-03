@@ -77,7 +77,7 @@ fill_line = { "\\fill-line" ~ nested_braces }
 // Variable definitions and references
 variable_name = @{ (letter | digit | "_")+ }
 variable_reference = { "\\" ~ variable_name }
-variable_value = { music_mode | variable_reference | string_literal | real | unsigned }
+variable_value = { music_mode | lyricmode | variable_reference | string_literal | real | unsigned }
 variable_definition = { variable_name ~ "=" ~ variable_value }
 
 // Header block with proper parsing
@@ -136,7 +136,7 @@ basic_music_item = {
     articulation | dynamic | break_command | bar_number_check | 
     arpeggio | bar_command | parentheses | angle_brackets |
     pointandclickoff | numerictime | music_comment |
-    new_voice  | new_lyrics | override_command | set_command | merge_command |
+    override_command | set_command | merge_command |
     variable_reference
 }
 
@@ -144,13 +144,27 @@ basic_music_item = {
 basic_music_sequence = { basic_music_item* }
 
 // Lyrics - support Unicode characters for international text
-// Single character or sequence of ASCII letters/digits/punctuation
-lyric_syllable = @{ (letter | digit | "-" | "_")+ | '\u{0080}'..'\u{FFFF}' }
-lyric_extender = @{ "__" }
-lyric_hyphen = @{ "--" }
-lyric_item = { lyric_extender | lyric_hyphen | lyric_syllable }
-// Lyric sequence - more flexible, just skip everything until closing brace
-lyric_sequence = { (!"}" ~ ANY)* }
+// Lyric text - plain text excluding commands and closing brace
+lyric_text = @{ (!"}" ~ !("\\" ~ letter) ~ ANY)+ }
+
+// Basic lyric item - text, set command, or override command (no variable reference)
+basic_lyric_item = { 
+    override_command | 
+    set_command | 
+    lyric_text 
+}
+
+// Basic lyric sequence - sequence of basic lyric items (no variable reference)
+basic_lyric_sequence = { basic_lyric_item+ }
+
+// Lyric item - adds variable reference to basic lyric item
+lyric_item = { 
+    variable_reference | 
+    basic_lyric_item
+}
+
+// Lyric sequence - sequence of lyric items (includes variable reference)
+lyric_sequence = { lyric_item*}
 
 // Music modes and transformations
 fixed_reference = { note_name ~ octave_modifier }
@@ -159,13 +173,13 @@ relative_reference = { note_name ~ octave_modifier }
 fixed_mode = { "\\fixed" ~ fixed_reference ~ "{" ~ basic_music_sequence ~ "}" }
 relative_mode = { "\\relative" ~ relative_reference? ~ "{" ~ basic_music_sequence ~ "}" }
 absolute_mode = { "\\absolute" ~ "{" ~ basic_music_sequence ~ "}" }
-lyricmode = { "\\lyricmode" ~ "{" ~ lyric_sequence ~ "}" }
+lyricmode = { "\\lyricmode" ~ "{" ~ basic_lyric_sequence ~ "}" }
 
 // Enhanced music expression to include modes
-music_mode = { fixed_mode | relative_mode | absolute_mode | lyricmode }
+music_mode = { fixed_mode | relative_mode | absolute_mode }
 
 // Full music item including modes
-music_item = { basic_music_item | music_mode }
+music_item = { new_voice  | new_lyrics | basic_music_item | music_mode  }
 
 // Music sequence - properly parsed sequence of music items
 music_sequence = { music_item* }
@@ -174,7 +188,7 @@ music_sequence = { music_item* }
 context_type = @{ "Staff" | "Voice" | "PianoStaff" | "ChoirStaff" | "GrandStaff" | "StaffGroup" }
 new_context = { "\\new" ~ context_type ~ ("=" ~ (identifier | string_literal))? }
 new_voice = { "\\new" ~ "Voice" ~ ("=" ~ (identifier | string_literal))? ~ (simple_staff | variable_reference) }
-new_lyrics = { "\\new" ~ "Lyrics" ~ ("=" ~ (identifier | string_literal))? ~ ("\\lyricsto" ~ string_literal ~ ("{" ~ lyric_sequence ~ "}" | variable_reference))? }
+new_lyrics = { "\\new" ~ "Lyrics" ~ ("=" ~ (identifier | string_literal))? ~ ((lyricsto ~ ("{" ~ lyric_sequence ~ "}" | variable_reference)) | lyricmode)? }
 lyricsto = { "\\lyricsto" ~ string_literal }
 addlyrics = { "\\addlyrics" ~ "{" ~ lyric_sequence ~ "}" }
 
@@ -198,9 +212,9 @@ piano_staff = { "\\new" ~ "PianoStaff" ~ ("=" ~ (identifier | string_literal))? 
 
 // Score content with more options
 score_content = { 
-    piano_staff | staff | simple_staff | music_mode  | new_lyrics | simultaneous_music
+    piano_staff | staff | simple_staff | music_mode  | new_lyrics | addlyrics | simultaneous_music
 }
-score = { "\\score" ~ "{" ~ score_content ~ addlyrics* ~ layout_block? ~ midi_block? ~ "}" }
+score = { "\\score" ~ "{" ~ score_content ~ layout_block? ~ midi_block? ~ "}" }
 
 // Book structures
 book_item = { score | header }

@@ -77,8 +77,18 @@ function App() {
       const initialIndices = new Map<number, number>();
       if (parsed?.staves && parsed.staves.length > 0) {
         parsed.staves.forEach((staff, staffIndex) => {
-          // Find the first note that is not a Clef or Time marker
-          if (staff.notes && staff.notes.length > 0) {
+          // Check if staff has voices or notes
+          if (staff.voices && staff.voices.length > 0) {
+            // For multi-voice staves, find first real note in first voice
+            const firstVoice = staff.voices[0];
+            const firstRealNoteIndex = firstVoice.base.notes.findIndex(
+              note => note.note_type !== 'Clef' && note.note_type !== 'Time'
+            );
+            if (firstRealNoteIndex !== -1) {
+              initialIndices.set(staffIndex, firstRealNoteIndex);
+            }
+          } else if (staff.notes && staff.notes.length > 0) {
+            // Find the first note that is not a Clef or Time marker
             const firstRealNoteIndex = staff.notes.findIndex(
               note => note.note_type !== 'Clef' && note.note_type !== 'Time'
             );
@@ -91,8 +101,14 @@ function App() {
         // Initialize staff instruments and volumes
         const newStaffInstruments = new Map<number, string>();
         const newStaffVolumes = new Map<number, boolean>();
+        
+        // Try to restore staffInstruments from localStorage
+        const savedInstruments = localStorage.getItem('staffInstruments');
+        const instrumentsMap = savedInstruments ? JSON.parse(savedInstruments) : {};
+        
         parsed.staves.forEach((_, staffIndex) => {
-          newStaffInstruments.set(staffIndex, selectedInstrument);
+          // Use saved instrument if available, otherwise use selectedInstrument
+          newStaffInstruments.set(staffIndex, instrumentsMap[staffIndex] || selectedInstrument);
           newStaffVolumes.set(staffIndex, true);
         });
         setStaffInstruments(newStaffInstruments);
@@ -130,8 +146,18 @@ function App() {
         const initialIndices = new Map<number, number>();
         if (parsed?.staves && parsed.staves.length > 0) {
           parsed.staves.forEach((staff, staffIndex) => {
-            // Find the first note that is not a Clef or Time marker
-            if (staff.notes && staff.notes.length > 0) {
+            // Check if staff has voices or notes
+            if (staff.voices && staff.voices.length > 0) {
+              // For multi-voice staves, find first real note in first voice
+              const firstVoice = staff.voices[0];
+              const firstRealNoteIndex = firstVoice.base.notes.findIndex(
+                note => note.note_type !== 'Clef' && note.note_type !== 'Time'
+              );
+              if (firstRealNoteIndex !== -1) {
+                initialIndices.set(staffIndex, firstRealNoteIndex);
+              }
+            } else if (staff.notes && staff.notes.length > 0) {
+              // Find the first note that is not a Clef or Time marker
               const firstRealNoteIndex = staff.notes.findIndex(
                 note => note.note_type !== 'Clef' && note.note_type !== 'Time'
               );
@@ -144,8 +170,14 @@ function App() {
           // Initialize staff instruments and volumes
           const newStaffInstruments = new Map<number, string>();
           const newStaffVolumes = new Map<number, boolean>();
+          
+          // Try to restore staffInstruments from localStorage
+          const savedInstruments = localStorage.getItem('staffInstruments');
+          const instrumentsMap = savedInstruments ? JSON.parse(savedInstruments) : {};
+          
           parsed.staves.forEach((_, staffIndex) => {
-            newStaffInstruments.set(staffIndex, selectedInstrument);
+            // Use saved instrument if available, otherwise use selectedInstrument
+            newStaffInstruments.set(staffIndex, instrumentsMap[staffIndex] || selectedInstrument);
             newStaffVolumes.set(staffIndex, true);
           });
           setStaffInstruments(newStaffInstruments);
@@ -245,6 +277,17 @@ function App() {
   useEffect(() => {
     localStorage.setItem('selectedInstrument', selectedInstrument);
   }, [selectedInstrument]);
+
+  // Save staffInstruments to localStorage whenever it changes
+  useEffect(() => {
+    if (staffInstruments.size > 0) {
+      const instrumentsObj: Record<number, string> = {};
+      staffInstruments.forEach((value, key) => {
+        instrumentsObj[key] = value;
+      });
+      localStorage.setItem('staffInstruments', JSON.stringify(instrumentsObj));
+    }
+  }, [staffInstruments]);
 
   useEffect(() => {
     loadSampleMusic();

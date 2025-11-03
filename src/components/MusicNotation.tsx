@@ -18,10 +18,24 @@ interface LilyPondNote {
   group_end?: boolean;  // True if this note ends a slur group
 }
 
+interface Lyric {
+  text_nodes: string[];
+}
+
+interface VoiceData {
+  base: {
+    name?: string;
+    clef?: string;
+    notes: LilyPondNote[];
+  };
+  lyrics: Lyric[];
+}
+
 interface Staff {
   name?: string;
   clef?: string;
   notes?: LilyPondNote[];
+  voices?: VoiceData[];
   lyrics?: any[];
 }
 
@@ -183,6 +197,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
       '4': 'q',   // quarter note
       '8': '8',   // eighth note
       '16': '16', // sixteenth note
+      '32': '32' // thirty-second note
     };
 
     const duration = durationMap[note.duration] || 'q';
@@ -239,9 +254,34 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     const ticksPerBeat = Flow.durationToTicks(beatValue.toString());
     const ticksPerMeasure = ticksPerBeat * numBeats;
 
-    // Convert notes for each staff, tracking clef changes
-    const staffVexNotes = staves.map((staff, staffIdx) => 
-      (staff.notes || []).map((note, noteIdx) => {
+    // Determine notes to render for each staff
+    // If staff has voices, keep them separate; otherwise use staff.notes
+    const staffVoicesData = staves.map((staff, staffIdx) => {
+      if (staff.voices && staff.voices.length > 0) {
+        // Multiple voices: keep them separate
+        return {
+          voices: staff.voices.map(voice => ({
+            notes: voice.base.notes || [],
+            lyrics: voice.lyrics || []
+          })),
+          hasVoices: true
+        };
+      } else {
+        // No voices: treat staff.notes as a single voice
+        return {
+          voices: [{
+            notes: staff.notes || [],
+            lyrics: staff.lyrics || []
+          }],
+          hasVoices: false
+        };
+      }
+    });
+
+    // Convert notes for each staff and voice, tracking clef changes
+    const staffVexNotes = staffVoicesData.map((staffData, staffIdx) => 
+      staffData.voices.map((voiceData, voiceIdx) =>
+        voiceData.notes.map((note, noteIdx) => {
         // Check if this is a clef marker
         if (note.note_type === 'Clef' && note.clef) {
           console.log(`Found clef marker at note ${noteIdx}: ${note.clef}`);
@@ -279,6 +319,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
             '4': 'q',   // quarter note
             '8': '8',   // eighth note
             '16': '16', // sixteenth note
+            '32': '32' // thirty-second note
           };
           let duration = durationMap[note.duration] || 'q';
           // Add 'd' suffix for dotted notes (e.g., 'qd' for dotted quarter note)
@@ -311,7 +352,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
           }
           
           staveNote = new StaveNote({
-            clef: staff.clef || 'treble',
+            clef: staves[staffIdx].clef || 'treble',
             keys: keys,
             duration: duration,
             auto_stem: true  // Automatically determine stem direction
@@ -353,7 +394,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
               duration += 'd'.repeat(note.dots.length);
             }
             staveNote = new StaveNote({
-              clef: staff.clef || 'treble',
+              clef: staves[staffIdx].clef || 'treble',
               keys: ['b/4'],  // Rest needs a key, but it won't be displayed
               duration: duration,
               type: 'r'  // Mark as rest
@@ -374,7 +415,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
               duration += 'd'.repeat(note.dots.length);
             }
             staveNote = new StaveNote({
-              clef: staff.clef || 'treble',
+              clef: staves[staffIdx].clef || 'treble',
               keys: [`${pitch}/${octave}`],
               duration: duration,
               auto_stem: true  // Automatically determine stem direction
@@ -414,16 +455,18 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
         (staveNote as any)._groupEnd = note.group_end || false;
 
         return staveNote;
-      })
+        })
+      )
     );
 
-    // Split each staff's notes into measures
-    const staffMeasures = staffVexNotes.map(vexNotes => {
-      const measures: any[][] = [];
-      let currentMeasure: any[] = [];
-      let currentTicks = 0;
+    // Split each staff's voices' notes into measures
+    const staffMeasures = staffVexNotes.map(staffVoices => 
+      staffVoices.map(voiceNotes => {
+        const measures: any[][] = [];
+        let currentMeasure: any[] = [];
+        let currentTicks = 0;
 
-      for (const note of vexNotes) {
+        for (const note of voiceNotes) {
         // Check if this is a clef marker
         if ((note as any)._isClefMarker) {
           // If current measure is full, start a new measure with the clef marker
@@ -473,15 +516,18 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
         }
       }
 
-      if (currentMeasure.length > 0) {
-        measures.push(currentMeasure);
-      }
+        if (currentMeasure.length > 0) {
+          measures.push(currentMeasure);
+        }
 
-      return measures;
-    });
+        return measures;
+      })
+    );
 
-    // Get the maximum number of measures across all staves
-    const maxMeasures = Math.max(...staffMeasures.map(m => m.length));
+    // Get the maximum number of measures across all staves (all voices should have same measure count)
+    const maxMeasures = Math.max(...staffMeasures.map(staffVoices => 
+      Math.max(...staffVoices.map(voiceMeasures => voiceMeasures.length))
+    ));
 
     // Calculate layout - use dynamic container width
     const marginLeft = leftMargin;
@@ -504,6 +550,15 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
       measureRows.push(i);
     }
 
+    // Store lyric rendering info for later (after all notes are drawn)
+    const lyricRenderingInfo: Array<{
+      staffIndex: number;
+      voiceIdx: number;
+      lyrics: any[];
+      notesPerRow: Array<any[]>; // notes for each row
+      rowYPositions: number[]; // Y position for each row
+    }> = [];
+
     // Render each row
     measureRows.forEach((startMeasure, rowIndex) => {
       const endMeasure = Math.min(startMeasure + measuresPerRow, maxMeasures);
@@ -522,29 +577,36 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
           const measureStave = new Stave(x, staffY, staveWidth);
 
           // Check if this measure has a clef change or time signature change
-          const measures = staffMeasures[staffIndex];
+          const voiceMeasures = staffMeasures[staffIndex];
           let clefToDisplay: string | null = null;
           let timeSignatureToDisplay: string | null = null;
           
           if (measureIdx === 0) {
             // First measure: always show clef
-            clefToDisplay = staff.clef || 'treble';
+            clefToDisplay = staves[staffIndex].clef || 'treble';
           }
           
-          // Check for markers in any measure (including first)
-          if (measureIdx < measures.length && measures[measureIdx].length > 0) {
-            // Check if there's a clef marker in this measure
-            const clefMarker = measures[measureIdx].find((note: any) => note._isClefMarker);
-            if (clefMarker) {
-              clefToDisplay = clefMarker._clefType;
-              console.log(`Measure ${measureIdx}: Found clef marker for ${clefToDisplay}`);
-            }
+          // Check for markers in any voice (for multi-voice staves)
+          for (let voiceIdx = 0; voiceIdx < voiceMeasures.length; voiceIdx++) {
+            const measures = voiceMeasures[voiceIdx];
+            if (measureIdx < measures.length && measures[measureIdx].length > 0) {
+              // Check if there's a clef marker in this measure
+              if (!clefToDisplay || measureIdx > 0) {
+                const clefMarker = measures[measureIdx].find((note: any) => note._isClefMarker) as any;
+                if (clefMarker) {
+                  clefToDisplay = clefMarker._clefType;
+                  console.log(`Measure ${measureIdx}: Found clef marker for ${clefToDisplay}`);
+                }
+              }
 
-            // Check if there's a time signature marker in this measure
-            const timeSignatureMarker = measures[measureIdx].find((note: any) => note._isTimeSignatureMarker);
-            if (timeSignatureMarker) {
-              timeSignatureToDisplay = timeSignatureMarker._timeSignature;
-              console.log(`Measure ${measureIdx}: Found time signature marker for ${timeSignatureToDisplay}`);
+              // Check if there's a time signature marker in this measure
+              if (!timeSignatureToDisplay) {
+                const timeSignatureMarker = measures[measureIdx].find((note: any) => note._isTimeSignatureMarker) as any;
+                if (timeSignatureMarker) {
+                  timeSignatureToDisplay = timeSignatureMarker._timeSignature;
+                  console.log(`Measure ${measureIdx}: Found time signature marker for ${timeSignatureToDisplay}`);
+                }
+              }
             }
           }
 
@@ -578,33 +640,42 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
           measureStave.setContext(context).draw();
           rowStaves.push(measureStave);
 
-          // Render notes for this measure
-          if (measureIdx < measures.length && measures[measureIdx].length > 0) {
-            // Filter out clef markers and time signature markers - they shouldn't be rendered as notes
-            const measureNotes = measures[measureIdx].filter((note: any) => 
-              !note._isClefMarker && !note._isTimeSignatureMarker
-            );
-            
-            if (measureNotes.length === 0) {
-              // Skip if only clef markers in this measure
-              continue;
+          // Render notes for this measure - handle multiple voices
+          const staffVoices = staffMeasures[staffIndex];
+          const voicesToRender: any[] = [];
+          
+          for (let voiceIdx = 0; voiceIdx < staffVoices.length; voiceIdx++) {
+            const voiceMeasures = staffVoices[voiceIdx];
+            if (measureIdx < voiceMeasures.length && voiceMeasures[measureIdx].length > 0) {
+              // Filter out clef markers and time signature markers - they shouldn't be rendered as notes
+              const measureNotes = voiceMeasures[measureIdx].filter((note: any) => 
+                !note._isClefMarker && !note._isTimeSignatureMarker
+              );
+              
+              if (measureNotes.length === 0) {
+                // Skip if only clef markers in this measure
+                continue;
+              }
+
+              let measureTicks = 0;
+              measureNotes.forEach(note => {
+                measureTicks += note.getTicks().value();
+              });
+
+              const actualBeats = measureTicks / ticksPerBeat;
+              const voiceBeats = Math.min(actualBeats, numBeats);
+              const voice = new Voice({
+                num_beats: voiceBeats,
+                beat_value: beatValue
+              });
+
+              voice.setMode(Voice.Mode.SOFT);
+              voice.addTickables(measureNotes);
+              voicesToRender.push({ voice, measureNotes });
             }
+          }
 
-            let measureTicks = 0;
-            measureNotes.forEach(note => {
-              measureTicks += note.getTicks().value();
-            });
-
-            const actualBeats = measureTicks / ticksPerBeat;
-            const voiceBeats = Math.min(actualBeats, numBeats);
-            const voice = new Voice({
-              num_beats: voiceBeats,
-              beat_value: beatValue
-            });
-
-            voice.setMode(Voice.Mode.SOFT);
-            voice.addTickables(measureNotes);
-
+          if (voicesToRender.length > 0) {
             // Calculate available width for notes
             // Reserve space for clef (if present), key signature, time signature, and padding
             let reservedWidth = 20; // Base padding
@@ -624,120 +695,125 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
             const formatter = new Formatter();
             
             // Calculate minimum width needed based on note count
-            const noteCount = measureNotes.length;
+            const totalNoteCount = voicesToRender.reduce((sum, v) => sum + v.measureNotes.length, 0);
             const minWidthPerNote = 25; // Minimum pixels per note
-            const idealWidth = noteCount * minWidthPerNote;
+            const idealWidth = totalNoteCount * minWidthPerNote;
             
             // Use the larger of available width or ideal width, but cap at available
             const formatWidth = Math.min(Math.max(availableWidth, idealWidth), availableWidth);
             
-            formatter.joinVoices([voice]).format([voice], formatWidth);
+            // Format all voices together
+            const allVoices = voicesToRender.map(v => v.voice);
+            formatter.joinVoices(allVoices).format(allVoices, formatWidth);
             
-            // Custom beam grouping: group consecutive beamable notes with same duration
-            // Maximum 4 notes per beam group
-            const beams: Beam[] = [];
-            let currentGroup: any[] = [];
-            let lastDuration: string | null = null;
-            const MAX_BEAM_GROUP_SIZE = 4;
-            
-            for (let i = 0; i < measureNotes.length; i++) {
-              const note = measureNotes[i];
-              const duration = note.getDuration();
+            // Draw all voices and their beams/slurs
+            voicesToRender.forEach(({ voice, measureNotes }) => {
+              // Custom beam grouping: group consecutive beamable notes with same duration
+              // Maximum 4 notes per beam group
+              const beams: Beam[] = [];
+              let currentGroup: any[] = [];
+              let lastDuration: string | null = null;
+              const MAX_BEAM_GROUP_SIZE = 4;
               
-              // Check if this is a rest note
-              const isRest = duration.includes('r') || note.isRest?.() || note.constructor.name === 'StaveRest';
-              
-              // Check if note is beamable (8th notes or shorter, not whole/half/quarter)
-              const baseDuration = duration.replace(/[dr]/g, '');
-              const isBeamable = ['8', '16', '32', '64'].includes(baseDuration);
-              
-              if (isBeamable && !isRest) {
-                // Check if this note has the same duration as the previous one
-                if (lastDuration === null || lastDuration === duration) {
-                  currentGroup.push(note);
-                  lastDuration = duration;
-                  
-                  // If group reaches max size, create beam and start new group
-                  if (currentGroup.length >= MAX_BEAM_GROUP_SIZE) {
+              for (let i = 0; i < measureNotes.length; i++) {
+                const note = measureNotes[i];
+                const duration = note.getDuration();
+                
+                // Check if this is a rest note
+                const isRest = duration.includes('r') || note.isRest?.() || note.constructor.name === 'StaveRest';
+                
+                // Check if note is beamable (8th notes or shorter, not whole/half/quarter)
+                const baseDuration = duration.replace(/[dr]/g, '');
+                const isBeamable = ['8', '16', '32', '64'].includes(baseDuration);
+                
+                if (isBeamable && !isRest) {
+                  // Check if this note has the same duration as the previous one
+                  if (lastDuration === null || lastDuration === duration) {
+                    currentGroup.push(note);
+                    lastDuration = duration;
+                    
+                    // If group reaches max size, create beam and start new group
+                    if (currentGroup.length >= MAX_BEAM_GROUP_SIZE) {
+                      if (currentGroup.length >= 2) {
+                        // Use autoStem=true to automatically adjust stem direction
+                        beams.push(new Beam(currentGroup, true));
+                      }
+                      currentGroup = [];
+                      lastDuration = null;
+                    }
+                  } else {
+                    // Duration changed, end current group and start new one
                     if (currentGroup.length >= 2) {
                       // Use autoStem=true to automatically adjust stem direction
                       beams.push(new Beam(currentGroup, true));
                     }
-                    currentGroup = [];
-                    lastDuration = null;
+                    currentGroup = [note];
+                    lastDuration = duration;
                   }
                 } else {
-                  // Duration changed, end current group and start new one
+                  // Not beamable or is a rest, end current group
                   if (currentGroup.length >= 2) {
                     // Use autoStem=true to automatically adjust stem direction
                     beams.push(new Beam(currentGroup, true));
                   }
-                  currentGroup = [note];
-                  lastDuration = duration;
+                  currentGroup = [];
+                  lastDuration = null;
                 }
-              } else {
-                // Not beamable or is a rest, end current group
-                if (currentGroup.length >= 2) {
-                  // Use autoStem=true to automatically adjust stem direction
-                  beams.push(new Beam(currentGroup, true));
-                }
-                currentGroup = [];
-                lastDuration = null;
-              }
-            }
-            
-            // Don't forget the last group
-            if (currentGroup.length >= 2) {
-              // Use autoStem=true to automatically adjust stem direction
-              beams.push(new Beam(currentGroup, true));
-            }
-            
-            // Draw voice with beamed notes
-            voice.draw(context, measureStave);
-            
-            // Draw beams
-            beams.forEach((beam) => {
-              beam.setContext(context).draw();
-            });
-            
-            // Create and draw slurs based on group_start and group_end markers
-            const slurs: Curve[] = [];
-            let slurStartNote: any = null;
-            
-            for (let i = 0; i < measureNotes.length; i++) {
-              const note = measureNotes[i];
-              
-              // Check if this note starts a slur group
-              if ((note as any)._groupStart) {
-                slurStartNote = note;
               }
               
-              // Check if this note ends a slur group
-              if ((note as any)._groupEnd && slurStartNote) {
-                // Create a slur from slurStartNote to current note
-                const slur = new Curve(slurStartNote, note, {
-                  cps: [
-                    { x: 0, y: 10 },
-                    { x: 0, y: 10 }
-                  ]
-                });
-                slurs.push(slur);
-                slurStartNote = null;
+              // Don't forget the last group
+              if (currentGroup.length >= 2) {
+                // Use autoStem=true to automatically adjust stem direction
+                beams.push(new Beam(currentGroup, true));
               }
-            }
-            
-            // Draw slurs
-            slurs.forEach((slur) => {
-              slur.setContext(context).draw();
-            });
+              
+              // Draw voice with beamed notes
+              voice.draw(context, measureStave);
+              
+              // Draw beams
+              beams.forEach((beam) => {
+                beam.setContext(context).draw();
+              });
+              
+              // Create and draw slurs based on group_start and group_end markers
+              const slurs: Curve[] = [];
+              let slurStartNote: any = null;
+              
+              for (let i = 0; i < measureNotes.length; i++) {
+                const note = measureNotes[i];
+                
+                // Check if this note starts a slur group
+                if ((note as any)._groupStart) {
+                  slurStartNote = note;
+                }
+                
+                // Check if this note ends a slur group
+                if ((note as any)._groupEnd && slurStartNote) {
+                  // Create a slur from slurStartNote to current note
+                  const slur = new Curve(slurStartNote, note, {
+                    cps: [
+                      { x: 0, y: 10 },
+                      { x: 0, y: 10 }
+                    ]
+                  });
+                  slurs.push(slur);
+                  slurStartNote = null;
+                }
+              }
+              
+              // Draw slurs
+              slurs.forEach((slur) => {
+                slur.setContext(context).draw();
+              });
 
-            // Draw arpeggios
-            for (let i = 0; i < measureNotes.length; i++) {
-              const note = measureNotes[i];
-              if ((note as any)._arpeggio) {
-                drawArpeggio(note, context);
+              // Draw arpeggios
+              for (let i = 0; i < measureNotes.length; i++) {
+                const note = measureNotes[i];
+                if ((note as any)._arpeggio) {
+                  drawArpeggio(note, context);
+                }
               }
-            }
+            });
           }
         }
 
@@ -764,6 +840,140 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
         connector.setType(StaveConnector.type.BRACE);
         connector.setContext(context).draw();
       }
+
+      // Collect lyric rendering info for this row
+      staves.forEach((staff, staffIndex) => {
+        const staffY = rowY + staffIndex * (staveHeight + staffSpacing);
+        const lyricStartY = staffY + staveHeight + 15;
+        
+        const currentStaffVoices = staffVoicesData[staffIndex];
+        
+        currentStaffVoices.voices.forEach((voiceData: any, voiceIdx: number) => {
+          const lyrics = voiceData.lyrics;
+          const voiceNotes = voiceData.notes;
+          
+          if (lyrics && lyrics.length > 0 && voiceNotes && voiceNotes.length > 0) {
+            const voiceMeasures = staffMeasures[staffIndex][voiceIdx];
+            
+            // Collect notes from this row
+            const notesInRow: any[] = [];
+            for (let measureIdx = startMeasure; measureIdx < endMeasure; measureIdx++) {
+              if (measureIdx < voiceMeasures.length) {
+                const measureNotes = voiceMeasures[measureIdx].filter((note: any) => 
+                  !note._isClefMarker && !note._isTimeSignatureMarker
+                );
+                notesInRow.push(...measureNotes);
+              }
+            }
+            
+            // Find or create entry for this staff/voice
+            let entry = lyricRenderingInfo.find(e => e.staffIndex === staffIndex && e.voiceIdx === voiceIdx);
+            if (!entry) {
+              entry = {
+                staffIndex,
+                voiceIdx,
+                lyrics,
+                notesPerRow: [],
+                rowYPositions: []
+              };
+              lyricRenderingInfo.push(entry);
+            }
+            
+            entry.notesPerRow.push(notesInRow);
+            entry.rowYPositions.push(lyricStartY);
+          }
+        });
+      });
+    });
+
+    // Draw lyrics after all notes are rendered
+    // This allows lyrics to span across multiple rows
+    lyricRenderingInfo.forEach((info) => {
+      const { lyrics, notesPerRow, rowYPositions } = info;
+      
+      // Flatten all notes from all rows, but filter out special note types
+      const allNotes: any[] = [];
+      const noteToRowMap: number[] = []; // Maps note index to row index
+      
+      notesPerRow.forEach((notes, rowIdx) => {
+        notes.forEach(note => {
+          // Skip clef markers, time signature markers, and rests
+          const isRest = note.isRest?.() ;
+        
+          if (!(note._isClefMarker || note._isTimeSignatureMarker || isRest)) {
+            allNotes.push(note);
+            noteToRowMap.push(rowIdx);
+          }
+        });
+      });
+      
+      if (allNotes.length === 0) return;
+      
+      // Draw each lyric line
+      lyrics.forEach((lyric: any, lyricIdx: number) => {
+        if (!lyric.text_nodes || lyric.text_nodes.length === 0) return;
+        
+        context.fillStyle = '#000000';
+        context.font = '12px Arial';
+        context.textAlign = 'center';
+        
+        let noteIndex = 0;
+        
+        // Draw each text node
+        for (let textIdx = 0; textIdx < lyric.text_nodes.length; textIdx++) {
+          // Skip notes that are inside a slur group (not the start)
+          while (noteIndex < allNotes.length) {
+            const currentNote = allNotes[noteIndex];
+            // If this note is not a slur start and is inside a slur group, skip it
+            if ((currentNote as any)._groupEnd && !(currentNote as any)._groupStart) {
+              noteIndex++;
+            } else {
+              break;
+            }
+          }
+          
+          if (noteIndex >= allNotes.length) break;
+          
+          const textNode = lyric.text_nodes[textIdx];
+          const note = allNotes[noteIndex];
+          const rowIdx = noteToRowMap[noteIndex];
+          
+          const lyricY = rowYPositions[rowIdx] + lyricIdx * 15;
+          
+          // Get note's x position
+          let noteX = 0;
+          try {
+            if (typeof note.getAbsoluteX === 'function') {
+              noteX = note.getAbsoluteX();
+            } else if (typeof note.getX === 'function') {
+              noteX = note.getX();
+            } else if (note.x !== undefined) {
+              noteX = note.x;
+            } else {
+              noteX = marginLeft + 50 + noteIndex * 30;
+            }
+          } catch (e) {
+            noteX = marginLeft + 50 + noteIndex * 30;
+          }
+          
+          // Draw lyric text
+          context.fillText(textNode, noteX, lyricY);
+          
+          // Move to next note, but skip all notes inside the current slur group
+          noteIndex++;
+          while (noteIndex < allNotes.length) {
+            const nextNote = allNotes[noteIndex];
+            // If this note is inside a slur group (has group_end but not group_start), skip it
+            if ((nextNote as any)._groupEnd && !(nextNote as any)._groupStart) {
+              noteIndex++;
+            } else {
+              break;
+            }
+          }
+        }
+        
+        context.textAlign = 'left';
+      });
     });
   };
 
@@ -1141,109 +1351,112 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
             
             formatter.joinVoices([voice]).format([voice], formatWidth);
             
-            // Custom beam grouping: group consecutive beamable notes with same duration
-            // Maximum 4 notes per beam group
-            const beams: Beam[] = [];
-            let currentGroup: any[] = [];
-            let lastDuration: string | null = null;
-            const MAX_BEAM_GROUP_SIZE = 4;
-            
-            for (let i = 0; i < measureNotes.length; i++) {
-              const note = measureNotes[i];
-              const duration = note.getDuration();
+            // Draw voice and its beams/slurs
+            {
+              // Custom beam grouping: group consecutive beamable notes with same duration
+              // Maximum 4 notes per beam group
+              const beams: Beam[] = [];
+              let currentGroup: any[] = [];
+              let lastDuration: string | null = null;
+              const MAX_BEAM_GROUP_SIZE = 4;
               
-              // Check if this is a rest note
-              const isRest = duration.includes('r') || note.isRest?.() || note.constructor.name === 'StaveRest';
-              
-              // Check if note is beamable (8th notes or shorter, not whole/half/quarter)
-              const baseDuration = duration.replace(/[dr]/g, '');
-              const isBeamable = ['8', '16', '32', '64'].includes(baseDuration);
-              
-              if (isBeamable && !isRest) {
-                // Check if this note has the same duration as the previous one
-                if (lastDuration === null || lastDuration === duration) {
-                  currentGroup.push(note);
-                  lastDuration = duration;
-                  
-                  // If group reaches max size, create beam and start new group
-                  if (currentGroup.length >= MAX_BEAM_GROUP_SIZE) {
+              for (let i = 0; i < notesToRender.length; i++) {
+                const note = notesToRender[i];
+                const duration = note.getDuration();
+                
+                // Check if this is a rest note
+                const isRest = duration.includes('r') || note.isRest?.() || note.constructor.name === 'StaveRest';
+                
+                // Check if note is beamable (8th notes or shorter, not whole/half/quarter)
+                const baseDuration = duration.replace(/[dr]/g, '');
+                const isBeamable = ['8', '16', '32', '64'].includes(baseDuration);
+                
+                if (isBeamable && !isRest) {
+                  // Check if this note has the same duration as the previous one
+                  if (lastDuration === null || lastDuration === duration) {
+                    currentGroup.push(note);
+                    lastDuration = duration;
+                    
+                    // If group reaches max size, create beam and start new group
+                    if (currentGroup.length >= MAX_BEAM_GROUP_SIZE) {
+                      if (currentGroup.length >= 2) {
+                        // Use autoStem=true to automatically adjust stem direction
+                        beams.push(new Beam(currentGroup, true));
+                      }
+                      currentGroup = [];
+                      lastDuration = null;
+                    }
+                  } else {
+                    // Duration changed, end current group and start new one
                     if (currentGroup.length >= 2) {
                       // Use autoStem=true to automatically adjust stem direction
                       beams.push(new Beam(currentGroup, true));
                     }
-                    currentGroup = [];
-                    lastDuration = null;
+                    currentGroup = [note];
+                    lastDuration = duration;
                   }
                 } else {
-                  // Duration changed, end current group and start new one
+                  // Not beamable or is a rest, end current group
                   if (currentGroup.length >= 2) {
                     // Use autoStem=true to automatically adjust stem direction
                     beams.push(new Beam(currentGroup, true));
                   }
-                  currentGroup = [note];
-                  lastDuration = duration;
+                  currentGroup = [];
+                  lastDuration = null;
                 }
-              } else {
-                // Not beamable or is a rest, end current group
-                if (currentGroup.length >= 2) {
-                  // Use autoStem=true to automatically adjust stem direction
-                  beams.push(new Beam(currentGroup, true));
-                }
-                currentGroup = [];
-                lastDuration = null;
-              }
-            }
-            
-            // Don't forget the last group
-            if (currentGroup.length >= 2) {
-              // Use autoStem=true to automatically adjust stem direction
-              beams.push(new Beam(currentGroup, true));
-            }
-            
-            // Draw voice with beamed notes
-            voice.draw(context, measureStave);
-            
-            // Draw beams
-            beams.forEach((beam) => {
-              beam.setContext(context).draw();
-            });
-            
-            // Create and draw slurs based on group_start and group_end markers
-            const slurs: Curve[] = [];
-            let slurStartNote: any = null;
-            
-            for (let i = 0; i < measureNotes.length; i++) {
-              const note = measureNotes[i];
-              
-              // Check if this note starts a slur group
-              if ((note as any)._groupStart) {
-                slurStartNote = note;
               }
               
-              // Check if this note ends a slur group
-              if ((note as any)._groupEnd && slurStartNote) {
-                // Create a slur from slurStartNote to current note
-                const slur = new Curve(slurStartNote, note, {
-                  cps: [
-                    { x: 0, y: 10 },
-                    { x: 0, y: 10 }
-                  ]
-                });
-                slurs.push(slur);
-                slurStartNote = null;
+              // Don't forget the last group
+              if (currentGroup.length >= 2) {
+                // Use autoStem=true to automatically adjust stem direction
+                beams.push(new Beam(currentGroup, true));
               }
-            }
-            
-            // Draw slurs
-            slurs.forEach((slur) => {
-              slur.setContext(context).draw();
-            });
+              
+              // Draw voice with beamed notes
+              voice.draw(context, measureStave);
+              
+              // Draw beams
+              beams.forEach((beam) => {
+                beam.setContext(context).draw();
+              });
+              
+              // Create and draw slurs based on group_start and group_end markers
+              const slurs: Curve[] = [];
+              let slurStartNote: any = null;
+              
+              for (let i = 0; i < notesToRender.length; i++) {
+                const note = notesToRender[i];
+                
+                // Check if this note starts a slur group
+                if ((note as any)._groupStart) {
+                  slurStartNote = note;
+                }
+                
+                // Check if this note ends a slur group
+                if ((note as any)._groupEnd && slurStartNote) {
+                  // Create a slur from slurStartNote to current note
+                  const slur = new Curve(slurStartNote, note, {
+                    cps: [
+                      { x: 0, y: 10 },
+                      { x: 0, y: 10 }
+                    ]
+                  });
+                  slurs.push(slur);
+                  slurStartNote = null;
+                }
+              }
+              
+              // Draw slurs
+              slurs.forEach((slur) => {
+                slur.setContext(context).draw();
+              });
 
-            // Draw arpeggios
-            for (let i = 0; i < measureNotes.length; i++) {
-              const note = measureNotes[i];
-              if ((note as any)._arpeggio) {
-                drawArpeggio(note, context);
+              // Draw arpeggios
+              for (let i = 0; i < measureNotes.length; i++) {
+                const note = measureNotes[i];
+                if ((note as any)._arpeggio) {
+                  drawArpeggio(note, context);
+                }
               }
             }
           }
@@ -1252,7 +1465,17 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     }
   };
 
-  const displayNotes = musicData?.staves?.flatMap(staff => staff.notes || []) || musicData?.notes || [];
+  // Calculate display notes, considering voices
+  const displayNotes = musicData?.staves?.flatMap(staff => {
+    if (staff.voices && staff.voices.length > 0) {
+      // If staff has voices, collect notes from all voices
+      return staff.voices.flatMap(voice => voice.base.notes || []);
+    } else {
+      // Otherwise use staff.notes
+      return staff.notes || [];
+    }
+  }) || musicData?.notes || [];
+  
   const staffCount = musicData?.staves?.length || 0;
   
   // Build status string showing current note for each staff
@@ -1261,8 +1484,17 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     musicData?.staves?.forEach((staff, idx) => {
       const currentNote = currentNoteIndices.get(idx);
       const staffName = staff.name || `Staff ${idx + 1}`;
-      if (currentNote !== undefined && staff.notes) {
-        statusParts.push(`${staffName}: ${currentNote + 1}/${staff.notes.length}`);
+      
+      // Calculate total notes for this staff
+      let totalNotes = 0;
+      if (staff.voices && staff.voices.length > 0) {
+        totalNotes = staff.voices.reduce((sum, voice) => sum + (voice.base.notes?.length || 0), 0);
+      } else {
+        totalNotes = staff.notes?.length || 0;
+      }
+      
+      if (currentNote !== undefined && totalNotes > 0) {
+        statusParts.push(`${staffName}: ${currentNote + 1}/${totalNotes}`);
       }
     });
   }

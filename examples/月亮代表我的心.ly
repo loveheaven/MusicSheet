@@ -160,7 +160,7 @@ PartPOneVoiceFive = \fixed c {
 
     }
 
-    geci = \lyricmode { 
+geci = \lyricmode { 
                         _ _ _ _ _ _ _ _ _ _ _ _ _  
                         你 问 我 爱 你 有 多 深，
                         我 爱 你 有 几 分？
@@ -199,12 +199,12 @@ PartPOneVoiceFive = \fixed c {
             
             \new Staff = "1" {
                 \new Voice = "PartPOneVoiceOne"   {\PartPOneVoiceOne }
-                \new Lyrics   \lyricsto  "PartPOneVoiceOne" { 
-                    \override Lyrics.LyricText.font-name = "Kai"
-                    \geci
-                    }
+                
             } 
-           
+            \new Lyrics  \lyricsto  "PartPOneVoiceOne" { 
+                \override Lyrics.LyricText.font-name = "Kai"
+                \geci
+            }
             \new Staff = "2" {
                 
                 \set Staff.midiInstrument = "acoustic grand"

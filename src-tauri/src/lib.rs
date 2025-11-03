@@ -2,7 +2,7 @@
 pub mod lilypond_parser;
 
 // Re-export the types from lilypond_parser for external use
-pub use lilypond_parser::{LilyPondNote, LyricSyllable, ParsedMusic, MusicMode, ApiParsedMusic};
+pub use lilypond_parser::{LilyPondNote, ParsedMusic, MusicMode, ApiParsedMusic};
 
 // Test modules
 #[cfg(test)]
