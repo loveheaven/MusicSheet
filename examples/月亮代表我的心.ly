@@ -205,6 +205,8 @@ geci = \lyricmode {
                 \override Lyrics.LyricText.font-name = "Kai"
                 \geci
             }
+            
+            
             \new Staff = "2" {
                 
                 \set Staff.midiInstrument = "acoustic grand"

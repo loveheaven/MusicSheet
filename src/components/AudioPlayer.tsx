@@ -1,6 +1,8 @@
 import { useImperativeHandle, forwardRef, useRef, useEffect } from 'react';
 import * as Tone from 'tone';
 import { Midi } from '@tonejs/midi';
+import { durationToSecondsMap } from '../utils/musicMaps';
+import type { LilyPondNote, Staff } from '../utils/musicMaps';
 
 // Instrument sample mappings - Complete list from tonejs-instruments
 export const INSTRUMENT_SAMPLES = {
@@ -123,39 +125,7 @@ export const INSTRUMENT_SAMPLES = {
   }
 };
 
-type NoteType = 'Default' | 'Clef' | 'Chord' | 'Time';
-
-interface LilyPondNote {
-  pitch: string;
-  duration: string;
-  octave: number;
-  dots: string;  // Dots for dotted notes
-  chord_notes?: Array<[string, number]>;
-  time_sig?: string;  // Time signature (e.g., "4/4", "3/4")
-  note_type?: NoteType;  // Type of note: Default, Clef, Chord, Time
-  group_start?: boolean;  // True if this note starts a slur group
-  group_end?: boolean;  // True if this note ends a slur group
-}
-
-interface Voice {
-  base: {
-    name?: string;
-    clef?: string;
-    notes: LilyPondNote[];
-  };
-  lyrics?: any[];
-}
-
-interface Staff {
-  name?: string;
-  clef?: string;
-  notes?: LilyPondNote[];
-  voices?: Voice[];
-  lyrics?: any[];
-}
-
 interface AudioPlayerProps {
-  notes?: LilyPondNote[];
   staves?: Staff[];
   onNoteProgress: (staffIndex: number, noteIndex: number) => void;
   onPlaybackEnd: () => void;
@@ -164,7 +134,7 @@ interface AudioPlayerProps {
   staffVolumes?: Map<number, boolean>;
 }
 
-const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNoteProgress, onPlaybackEnd, selectedInstrument = 'piano', staffInstruments = new Map(), staffVolumes = new Map() }, ref) => {
+const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress, onPlaybackEnd, selectedInstrument = 'piano', staffInstruments = new Map(), staffVolumes = new Map() }, ref) => {
   const synthsRef = useRef<Map<number, Tone.Sampler | Tone.Synth>>(new Map());
   const isPlayingRef = useRef(false);
   const scheduledEventsRef = useRef<number[]>([]);
@@ -199,7 +169,7 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
     // Dispose old synths
     synthsRef.current.forEach(synth => synth.dispose());
     synthsRef.current.clear();
-  }, [notes, staves, selectedInstrument, staffInstruments]);
+  }, [ staves, selectedInstrument, staffInstruments]);
 
   const convertLilyPondToTone = (note: LilyPondNote): string | string[] | null => {
     // Handle rest
@@ -247,15 +217,7 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
   };
 
   const getDurationInSeconds = (duration: string, dots?: string): number => {
-    const durationMap: { [key: string]: number } = {
-      '1': 2.0,
-      '2': 1.0,
-      '4': 0.5,
-      '8': 0.25,
-      '16': 0.125,
-    };
-
-    let baseDuration = durationMap[duration] || 0.5;
+    let baseDuration = durationToSecondsMap[duration] || 0.5;
     
     // Apply dots: each dot adds half of the previous duration
     // One dot: 1.5x, Two dots: 1.75x, Three dots: 1.875x
@@ -386,64 +348,41 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
       // Initialize current note indices
       currentNoteIndicesRef.current.clear();
 
-      // Determine which data structure to use
-      const hasStaves = staves && staves.length > 0;
-      const hasNotes = notes && notes.length > 0;
       let totalDuration = 0;
 
-      if (hasStaves) {
-        // Play multiple staves simultaneously
-        const synthPromises = staves!.map(async (staff, staffIndex) => {
-          // Check if staff has voices or notes
-          const hasVoices = staff.voices && staff.voices.length > 0;
-          const hasNotes = staff.notes && staff.notes.length > 0;
-          
-          if (!hasVoices && !hasNotes) return null;
-          const synth = await createSynthForStaff(staffIndex);
-          return { staff, staffIndex, synth };
-        });
+      const hasStaves = staves && staves.length > 0;
+      if (!hasStaves) {
+        return;
+      }
 
-        const loadedStaves = await Promise.all(synthPromises);
+      
+      // Play multiple staves simultaneously
+      const synthPromises = staves!.map(async (staff, staffIndex) => {
+        // Check if staff has voices or notes
+        const hasVoices = staff.voices && staff.voices.length > 0;
+        const hasNotes = staff.notes && staff.notes.length > 0;
         
-        loadedStaves.forEach((staffData) => {
-          if (!staffData) return;
-          const { staff, staffIndex, synth } = staffData;
-          const staffVolume = staffVolumes.get(staffIndex) ?? true;
+        if (!hasVoices && !hasNotes) return null;
+        const synth = await createSynthForStaff(staffIndex);
+        return { staff, staffIndex, synth };
+      });
 
-          // Check if staff has voices or notes
-          const hasVoices = staff.voices && staff.voices.length > 0;
-          const hasNotes = staff.notes && staff.notes.length > 0;
+      const loadedStaves = await Promise.all(synthPromises);
+      
+      loadedStaves.forEach((staffData) => {
+        if (!staffData) return;
+        const { staff, staffIndex, synth } = staffData;
+        const staffVolume = staffVolumes.get(staffIndex) ?? true;
 
-          if (hasVoices) {
-            // Play all voices in this staff simultaneously
-            staff.voices!.forEach((voice) => {
-              let transportTime = 0;
-              voice.base.notes.forEach((note) => {
-                // Skip non-playable notes
-                if (note.note_type === 'Clef' || note.note_type === 'Time') {
-                  return;
-                }
+        // Check if staff has voices or notes
+        const hasVoices = staff.voices && staff.voices.length > 0;
+        const hasNotes = staff.notes && staff.notes.length > 0;
 
-                const toneNote = convertLilyPondToTone(note);
-                const noteDuration = getDurationInSeconds(note.duration, note.dots);
-
-                // Schedule note playback
-                if (toneNote !== null) {
-                  const noteEventId = Tone.Transport.schedule((time) => {
-                    playNote(synth, toneNote, noteDuration, time, staffVolume);
-                  }, transportTime);
-                  scheduledEventsRef.current.push(noteEventId);
-                }
-
-                transportTime += noteDuration;
-              });
-
-              totalDuration = Math.max(totalDuration, transportTime);
-            });
-          } else if (hasNotes) {
-            // Play notes from staff.notes (backward compatibility)
+        if (hasVoices) {
+          // Play all voices in this staff simultaneously
+          staff.voices!.forEach((voice) => {
             let transportTime = 0;
-            staff.notes!.forEach((note) => {
+            voice.base.notes.forEach((note) => {
               // Skip non-playable notes
               if (note.note_type === 'Clef' || note.note_type === 'Time') {
                 return;
@@ -464,36 +403,34 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
             });
 
             totalDuration = Math.max(totalDuration, transportTime);
-          }
-        });
-      } else if (hasNotes) {
-        // Fallback: play single staff (backward compatibility)
-        const synth = await createSynthForStaff(0);
-        let transportTime = 0;
-        const staffVolume = staffVolumes.get(0) ?? true;
+          });
+        } else if (hasNotes) {
+          // Play notes from staff.notes (backward compatibility)
+          let transportTime = 0;
+          staff.notes!.forEach((note) => {
+            // Skip non-playable notes
+            if (note.note_type === 'Clef' || note.note_type === 'Time') {
+              return;
+            }
 
-        notes!.forEach((note) => {
-          // Skip non-playable notes
-          if (note.note_type === 'Clef' || note.note_type === 'Time') {
-            return;
-          }
+            const toneNote = convertLilyPondToTone(note);
+            const noteDuration = getDurationInSeconds(note.duration, note.dots);
 
-          const toneNote = convertLilyPondToTone(note);
-          const noteDuration = getDurationInSeconds(note.duration, note.dots);
+            // Schedule note playback
+            if (toneNote !== null) {
+              const noteEventId = Tone.Transport.schedule((time) => {
+                playNote(synth, toneNote, noteDuration, time, staffVolume);
+              }, transportTime);
+              scheduledEventsRef.current.push(noteEventId);
+            }
 
-          // Schedule note playback
-          if (toneNote !== null) {
-            const noteEventId = Tone.Transport.schedule((time) => {
-              playNote(synth, toneNote, noteDuration, time, staffVolume);
-            }, transportTime);
-            scheduledEventsRef.current.push(noteEventId);
-          }
+            transportTime += noteDuration;
+          });
 
-          transportTime += noteDuration;
-        });
-
-        totalDuration = transportTime;
-      }
+          totalDuration = Math.max(totalDuration, transportTime);
+        }
+      });
+      
 
       // Start playback
       Tone.Transport.start();
@@ -539,10 +476,12 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
       // Create a new MIDI file
       const midi = new Midi();
       midi.header.setTempo(120);
-
-      // Determine which data structure to use
+            
       const hasStaves = staves && staves.length > 0;
-      const hasNotes = notes && notes.length > 0;
+      if (!hasStaves) {
+        return;
+      }
+
 
       // Helper function to convert note name to MIDI note number
       const noteNameToMidi = (noteName: string): number => {
@@ -565,16 +504,7 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
 
       // Helper function to convert duration to seconds
       const durationToSeconds = (duration: string, dots?: string): number => {
-        const durationMap: { [key: string]: number } = {
-          '1': 2.0,   // Whole note
-          '2': 1.0,   // Half note
-          '4': 0.5,   // Quarter note
-          '8': 0.25,  // Eighth note
-          '16': 0.125, // Sixteenth note
-          '32': 0.0625 // Thirty-second note
-        };
-
-        let baseDuration = durationMap[duration] || 0.5;
+        let baseDuration = durationToSecondsMap[duration] || 0.5;
         
         // Apply dots
         if (dots && dots.length > 0) {
@@ -590,88 +520,33 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
         return baseDuration;
       };
 
-      if (hasStaves) {
-        // Process all staves
-        staves!.forEach((staff, staffIndex) => {
-          // Check if staff has voices or notes
-          const hasVoices = staff.voices && staff.voices.length > 0;
-          const hasNotes = staff.notes && staff.notes.length > 0;
-          
-          if (!hasVoices && !hasNotes) return;
+      // Process all staves
+      staves!.forEach((staff, staffIndex) => {
+        // Check if staff has voices or notes
+        const hasVoices = staff.voices && staff.voices.length > 0;
+        const hasNotes = staff.notes && staff.notes.length > 0;
+        
+        if (!hasVoices && !hasNotes) return;
 
-          const staffVolume = staffVolumes.get(staffIndex) ?? true;
+        const staffVolume = staffVolumes.get(staffIndex) ?? true;
 
-          if (hasVoices) {
-            // Process all voices in this staff
-            staff.voices!.forEach((voice, voiceIdx) => {
-              // Create a new track for each voice
-              const track = midi.addTrack();
-              
-              // Set track name if available
-              if (staff.name && voice.base.name) {
-                track.name = `${staff.name} - ${voice.base.name}`;
-              } else if (staff.name) {
-                track.name = `${staff.name} - Voice ${voiceIdx + 1}`;
-              } else if (voice.base.name) {
-                track.name = voice.base.name;
-              }
-
-              let currentTime = 0;
-              voice.base.notes.forEach((note) => {
-                // Skip non-playable notes
-                if (note.note_type === 'Clef' || note.note_type === 'Time' || note.pitch === 'r') {
-                  const duration = durationToSeconds(note.duration, note.dots);
-                  currentTime += duration;
-                  return;
-                }
-
-                // Skip if volume is off
-                if (!staffVolume) {
-                  const duration = durationToSeconds(note.duration, note.dots);
-                  currentTime += duration;
-                  return;
-                }
-
-                const toneNote = convertLilyPondToTone(note);
-                const duration = durationToSeconds(note.duration, note.dots);
-
-                if (Array.isArray(toneNote)) {
-                  // Chord: add all notes
-                  toneNote.forEach(pitch => {
-                    const midiNote = noteNameToMidi(pitch);
-                    track.addNote({
-                      midi: midiNote,
-                      time: currentTime,
-                      duration: duration,
-                      velocity: 0.8
-                    });
-                  });
-                } else if (toneNote) {
-                  // Single note
-                  const midiNote = noteNameToMidi(toneNote);
-                  track.addNote({
-                    midi: midiNote,
-                    time: currentTime,
-                    duration: duration,
-                    velocity: 0.8
-                  });
-                }
-
-                currentTime += duration;
-              });
-            });
-          } else if (hasNotes) {
-            // Process staff.notes (backward compatibility)
-            // Create a new track for each staff
+        if (hasVoices) {
+          // Process all voices in this staff
+          staff.voices!.forEach((voice, voiceIdx) => {
+            // Create a new track for each voice
             const track = midi.addTrack();
             
             // Set track name if available
-            if (staff.name) {
-              track.name = staff.name;
+            if (staff.name && voice.base.name) {
+              track.name = `${staff.name} - ${voice.base.name}`;
+            } else if (staff.name) {
+              track.name = `${staff.name} - Voice ${voiceIdx + 1}`;
+            } else if (voice.base.name) {
+              track.name = voice.base.name;
             }
 
             let currentTime = 0;
-            staff.notes!.forEach((note) => {
+            voice.base.notes.forEach((note) => {
               // Skip non-playable notes
               if (note.note_type === 'Clef' || note.note_type === 'Time' || note.pitch === 'r') {
                 const duration = durationToSeconds(note.duration, note.dots);
@@ -713,56 +588,63 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
 
               currentTime += duration;
             });
+          });
+        } else if (hasNotes) {
+          // Process staff.notes (backward compatibility)
+          // Create a new track for each staff
+          const track = midi.addTrack();
+          
+          // Set track name if available
+          if (staff.name) {
+            track.name = staff.name;
           }
-        });
-      } else if (hasNotes) {
-        // Process single staff
-        const track = midi.addTrack();
-        const staffVolume = staffVolumes.get(0) ?? true;
-        let currentTime = 0;
-        notes!.forEach((note) => {
-          // Skip non-playable notes
-          if (note.note_type === 'Clef' || note.note_type === 'Time' || note.pitch === 'r') {
+
+          let currentTime = 0;
+          staff.notes!.forEach((note) => {
+            // Skip non-playable notes
+            if (note.note_type === 'Clef' || note.note_type === 'Time' || note.pitch === 'r') {
+              const duration = durationToSeconds(note.duration, note.dots);
+              currentTime += duration;
+              return;
+            }
+
+            // Skip if volume is off
+            if (!staffVolume) {
+              const duration = durationToSeconds(note.duration, note.dots);
+              currentTime += duration;
+              return;
+            }
+
+            const toneNote = convertLilyPondToTone(note);
             const duration = durationToSeconds(note.duration, note.dots);
-            currentTime += duration;
-            return;
-          }
 
-          // Skip if volume is off
-          if (!staffVolume) {
-            const duration = durationToSeconds(note.duration, note.dots);
-            currentTime += duration;
-            return;
-          }
-
-          const toneNote = convertLilyPondToTone(note);
-          const duration = durationToSeconds(note.duration, note.dots);
-
-          if (Array.isArray(toneNote)) {
-            // Chord: add all notes
-            toneNote.forEach(pitch => {
-              const midiNote = noteNameToMidi(pitch);
+            if (Array.isArray(toneNote)) {
+              // Chord: add all notes
+              toneNote.forEach(pitch => {
+                const midiNote = noteNameToMidi(pitch);
+                track.addNote({
+                  midi: midiNote,
+                  time: currentTime,
+                  duration: duration,
+                  velocity: 0.8
+                });
+              });
+            } else if (toneNote) {
+              // Single note
+              const midiNote = noteNameToMidi(toneNote);
               track.addNote({
                 midi: midiNote,
                 time: currentTime,
                 duration: duration,
                 velocity: 0.8
               });
-            });
-          } else if (toneNote) {
-            // Single note
-            const midiNote = noteNameToMidi(toneNote);
-            track.addNote({
-              midi: midiNote,
-              time: currentTime,
-              duration: duration,
-              velocity: 0.8
-            });
-          }
+            }
 
-          currentTime += duration;
-        });
-      }
+            currentTime += duration;
+          });
+        }
+      });
+    
 
       // Generate MIDI data and download
       const midiData = midi.toArray();
@@ -812,91 +694,54 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
 
         // Determine which data structure to use
         const hasStaves = staves && staves.length > 0;
-        const hasNotes = notes && notes.length > 0;
+        if (!hasStaves) {
+          return;
+        }
 
-        if (hasStaves) {
-          // Play multiple staves simultaneously
-          const synthPromises = staves!.map(async (staff, staffIndex) => {
-            // Check if staff has voices or notes
-            const hasVoices = staff.voices && staff.voices.length > 0;
-            const hasNotes = staff.notes && staff.notes.length > 0;
-            
-            if (!hasVoices && !hasNotes) return null;
-            
-            // Find the first real note (not Clef or Time marker)
-            let firstRealNoteIndex = 0;
-            if (hasVoices) {
-              // For voices, find first real note in first voice
-              const firstVoice = staff.voices![0];
-              firstRealNoteIndex = firstVoice.base.notes.findIndex(
-                note => note.note_type !== 'Clef' && note.note_type !== 'Time'
-              );
-            } else if (hasNotes) {
-              firstRealNoteIndex = staff.notes!.findIndex(
-                note => note.note_type !== 'Clef' && note.note_type !== 'Time'
-              );
-            }
-            currentNoteIndicesRef.current.set(staffIndex, firstRealNoteIndex !== -1 ? firstRealNoteIndex : 0);
-            const synth = await createSynthForStaff(staffIndex);
-            return { staff, staffIndex, synth };
-          });
-
-          const loadedStaves = await Promise.all(synthPromises);
+      
+        // Play multiple staves simultaneously
+        const synthPromises = staves!.map(async (staff, staffIndex) => {
+          // Check if staff has voices or notes
+          const hasVoices = staff.voices && staff.voices.length > 0;
+          const hasNotes = staff.notes && staff.notes.length > 0;
           
-          loadedStaves.forEach((staffData) => {
-            if (!staffData) return;
-            const { staff, staffIndex, synth } = staffData;
-            const staffVolume = staffVolumes.get(staffIndex) ?? true;
+          if (!hasVoices && !hasNotes) return null;
+          
+          // Find the first real note (not Clef or Time marker)
+          let firstRealNoteIndex = 0;
+          if (hasVoices) {
+            // For voices, find first real note in first voice
+            const firstVoice = staff.voices![0];
+            firstRealNoteIndex = firstVoice.base.notes.findIndex(
+              note => note.note_type !== 'Clef' && note.note_type !== 'Time'
+            );
+          } else if (hasNotes) {
+            firstRealNoteIndex = staff.notes!.findIndex(
+              note => note.note_type !== 'Clef' && note.note_type !== 'Time'
+            );
+          }
+          currentNoteIndicesRef.current.set(staffIndex, firstRealNoteIndex !== -1 ? firstRealNoteIndex : 0);
+          const synth = await createSynthForStaff(staffIndex);
+          return { staff, staffIndex, synth };
+        });
 
-            // Check if staff has voices or notes
-            const hasVoices = staff.voices && staff.voices.length > 0;
-            const hasNotes = staff.notes && staff.notes.length > 0;
+        const loadedStaves = await Promise.all(synthPromises);
+        
+        loadedStaves.forEach((staffData) => {
+          if (!staffData) return;
+          const { staff, staffIndex, synth } = staffData;
+          const staffVolume = staffVolumes.get(staffIndex) ?? true;
 
-            if (hasVoices) {
-              // Play all voices in this staff simultaneously
-              let maxVoiceDuration = 0;
-              staff.voices!.forEach((voice, voiceIdx) => {
-                let transportTime = 0;
-                voice.base.notes.forEach((note, noteIdx) => {
-                  // Skip non-playable notes
-                  if (note.note_type === 'Clef' || note.note_type === 'Time') {
-                    return;
-                  }
+          // Check if staff has voices or notes
+          const hasVoices = staff.voices && staff.voices.length > 0;
+          const hasNotes = staff.notes && staff.notes.length > 0;
 
-                  const toneNote = convertLilyPondToTone(note);
-                  const noteDuration = getDurationInSeconds(note.duration, note.dots);
-
-                  // Schedule note playback
-                  if (toneNote !== null) {
-                    const noteEventId = Tone.Transport.schedule((time) => {
-                      if (!isPlayingRef.current) return;
-                      playNote(synth, toneNote, noteDuration, time, staffVolume);
-                    }, transportTime);
-                    scheduledEventsRef.current.push(noteEventId);
-                  }
-
-                  // Schedule UI update for the first voice (to show highlight)
-                  if (voiceIdx === 0) {
-                    const uiEventId = Tone.Transport.schedule((time) => {
-                      if (!isPlayingRef.current) return;
-                      Tone.Draw.schedule(() => {
-                        if (isPlayingRef.current) {
-                          currentNoteIndicesRef.current.set(staffIndex, noteIdx);
-                          onNoteProgress(staffIndex, noteIdx);
-                        }
-                      }, time);
-                    }, transportTime);
-                    scheduledEventsRef.current.push(uiEventId);
-                  }
-
-                  transportTime += noteDuration;
-                });
-                maxVoiceDuration = Math.max(maxVoiceDuration, transportTime);
-              });
-            } else if (hasNotes) {
-              // Play notes from staff.notes (backward compatibility)
+          if (hasVoices) {
+            // Play all voices in this staff simultaneously
+            let maxVoiceDuration = 0;
+            staff.voices!.forEach((voice, voiceIdx) => {
               let transportTime = 0;
-              staff.notes!.forEach((note, noteIndex) => {
+              voice.base.notes.forEach((note, noteIdx) => {
                 // Skip non-playable notes
                 if (note.note_type === 'Clef' || note.note_type === 'Time') {
                   return;
@@ -914,142 +759,119 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
                   scheduledEventsRef.current.push(noteEventId);
                 }
 
-                // Schedule UI update
-                const uiEventId = Tone.Transport.schedule((time) => {
-                  if (!isPlayingRef.current) return;
-                  Tone.Draw.schedule(() => {
-                    if (isPlayingRef.current) {
-                      currentNoteIndicesRef.current.set(staffIndex, noteIndex);
-                      onNoteProgress(staffIndex, noteIndex);
-                    }
-                  }, time);
-                }, transportTime);
+                // Schedule UI update for the first voice (to show highlight)
+                if (voiceIdx === 0) {
+                  const uiEventId = Tone.Transport.schedule((time) => {
+                    if (!isPlayingRef.current) return;
+                    Tone.Draw.schedule(() => {
+                      if (isPlayingRef.current) {
+                        currentNoteIndicesRef.current.set(staffIndex, noteIdx);
+                        onNoteProgress(staffIndex, noteIdx);
+                      }
+                    }, time);
+                  }, transportTime);
+                  scheduledEventsRef.current.push(uiEventId);
+                }
 
-                scheduledEventsRef.current.push(uiEventId);
                 transportTime += noteDuration;
               });
-            }
-          });
+              maxVoiceDuration = Math.max(maxVoiceDuration, transportTime);
+            });
+          } else if (hasNotes) {
+            // Play notes from staff.notes (backward compatibility)
+            let transportTime = 0;
+            staff.notes!.forEach((note, noteIndex) => {
+              // Skip non-playable notes
+              if (note.note_type === 'Clef' || note.note_type === 'Time') {
+                return;
+              }
 
-          // Calculate total duration (max duration across all staves)
-          let maxDuration = 0;
-          staves!.forEach(staff => {
-            if (staff.voices && staff.voices.length > 0) {
-              // For multi-voice staves, get max duration across all voices
-              const staffMaxDuration = Math.max(
-                ...staff.voices.map(voice =>
-                  voice.base.notes.reduce((sum, note) => {
-                    if (note.note_type === 'Clef' || note.note_type === 'Time') return sum;
-                    return sum + getDurationInSeconds(note.duration, note.dots);
-                  }, 0)
-                )
-              );
-              maxDuration = Math.max(maxDuration, staffMaxDuration);
-            } else if (staff.notes) {
-              // For single-note staves
-              const staffDuration = staff.notes.reduce((sum, note) => {
-                if (note.note_type === 'Clef' || note.note_type === 'Time') return sum;
-                return sum + getDurationInSeconds(note.duration, note.dots);
-              }, 0);
-              maxDuration = Math.max(maxDuration, staffDuration);
-            }
-          });
+              const toneNote = convertLilyPondToTone(note);
+              const noteDuration = getDurationInSeconds(note.duration, note.dots);
 
-          // Schedule playback end
-          const endEventId = Tone.Transport.schedule((time) => {
-            Tone.Draw.schedule(() => {
-              isPlayingRef.current = false;
-              isPausedRef.current = false;
-              isInitializedRef.current = false;
-              
-              // Reset all note indices to the first real note
-              staves!.forEach((staff, staffIndex) => {
-                let firstRealNoteIndex = -1;
-                
-                if (staff.voices && staff.voices.length > 0) {
-                  const firstVoice = staff.voices[0];
-                  firstRealNoteIndex = firstVoice.base.notes.findIndex(
-                    note => note.note_type !== 'Clef' && note.note_type !== 'Time'
-                  );
-                } else if (staff.notes && staff.notes.length > 0) {
-                  firstRealNoteIndex = staff.notes.findIndex(
-                    note => note.note_type !== 'Clef' && note.note_type !== 'Time'
-                  );
-                }
-                
-                const resetIndex = firstRealNoteIndex !== -1 ? firstRealNoteIndex : 0;
-                currentNoteIndicesRef.current.set(staffIndex, resetIndex);
-                onNoteProgress(staffIndex, resetIndex);
-              });
-              
-              onPlaybackEnd();
-            }, time);
-          }, maxDuration);
+              // Schedule note playback
+              if (toneNote !== null) {
+                const noteEventId = Tone.Transport.schedule((time) => {
+                  if (!isPlayingRef.current) return;
+                  playNote(synth, toneNote, noteDuration, time, staffVolume);
+                }, transportTime);
+                scheduledEventsRef.current.push(noteEventId);
+              }
 
-          scheduledEventsRef.current.push(endEventId);
-        } else if (hasNotes) {
-          // Fallback: play single staff (backward compatibility)
-          // Find the first real note (not Clef or Time marker)
-          const firstRealNoteIndex = notes!.findIndex(
-            note => note.note_type !== 'Clef' && note.note_type !== 'Time'
-          );
-          currentNoteIndicesRef.current.set(0, firstRealNoteIndex !== -1 ? firstRealNoteIndex : 0);
-          const synth = await createSynthForStaff(0);
-          let transportTime = 0;
-          const staffVolume = staffVolumes.get(0) ?? true;
-
-          notes!.forEach((note, noteIndex) => {
-            // Skip non-playable notes
-            if (note.note_type === 'Clef' || note.note_type === 'Time') {
-              return;
-            }
-
-            const toneNote = convertLilyPondToTone(note);
-            const noteDuration = getDurationInSeconds(note.duration, note.dots);
-
-            // Schedule note playback
-            if (toneNote !== null) {
-              const noteEventId = Tone.Transport.schedule((time) => {
+              // Schedule UI update
+              const uiEventId = Tone.Transport.schedule((time) => {
                 if (!isPlayingRef.current) return;
-                playNote(synth, toneNote, noteDuration, time, staffVolume);
+                Tone.Draw.schedule(() => {
+                  if (isPlayingRef.current) {
+                    currentNoteIndicesRef.current.set(staffIndex, noteIndex);
+                    onNoteProgress(staffIndex, noteIndex);
+                  }
+                }, time);
               }, transportTime);
-              scheduledEventsRef.current.push(noteEventId);
-            }
 
-            const uiEventId = Tone.Transport.schedule((time) => {
-              if (!isPlayingRef.current) return;
-              Tone.Draw.schedule(() => {
-                if (isPlayingRef.current) {
-                  currentNoteIndicesRef.current.set(0, noteIndex);
-                  onNoteProgress(0, noteIndex);
-                }
-              }, time);
-            }, transportTime);
+              scheduledEventsRef.current.push(uiEventId);
+              transportTime += noteDuration;
+            });
+          }
+        });
 
-            scheduledEventsRef.current.push(uiEventId);
-            transportTime += noteDuration;
-          });
+        // Calculate total duration (max duration across all staves)
+        let maxDuration = 0;
+        staves!.forEach(staff => {
+          if (staff.voices && staff.voices.length > 0) {
+            // For multi-voice staves, get max duration across all voices
+            const staffMaxDuration = Math.max(
+              ...staff.voices.map(voice =>
+                voice.base.notes.reduce((sum, note) => {
+                  if (note.note_type === 'Clef' || note.note_type === 'Time') return sum;
+                  return sum + getDurationInSeconds(note.duration, note.dots);
+                }, 0)
+              )
+            );
+            maxDuration = Math.max(maxDuration, staffMaxDuration);
+          } else if (staff.notes) {
+            // For single-note staves
+            const staffDuration = staff.notes.reduce((sum, note) => {
+              if (note.note_type === 'Clef' || note.note_type === 'Time') return sum;
+              return sum + getDurationInSeconds(note.duration, note.dots);
+            }, 0);
+            maxDuration = Math.max(maxDuration, staffDuration);
+          }
+        });
 
-          const endEventId = Tone.Transport.schedule((time) => {
-            Tone.Draw.schedule(() => {
-              isPlayingRef.current = false;
-              isPausedRef.current = false;
-              isInitializedRef.current = false;
+        // Schedule playback end
+        const endEventId = Tone.Transport.schedule((time) => {
+          Tone.Draw.schedule(() => {
+            isPlayingRef.current = false;
+            isPausedRef.current = false;
+            isInitializedRef.current = false;
+            
+            // Reset all note indices to the first real note
+            staves!.forEach((staff, staffIndex) => {
+              let firstRealNoteIndex = -1;
               
-              // Reset note index to the first real note
-              const firstRealNoteIndex = notes!.findIndex(
-                note => note.note_type !== 'Clef' && note.note_type !== 'Time'
-              );
+              if (staff.voices && staff.voices.length > 0) {
+                const firstVoice = staff.voices[0];
+                firstRealNoteIndex = firstVoice.base.notes.findIndex(
+                  note => note.note_type !== 'Clef' && note.note_type !== 'Time'
+                );
+              } else if (staff.notes && staff.notes.length > 0) {
+                firstRealNoteIndex = staff.notes.findIndex(
+                  note => note.note_type !== 'Clef' && note.note_type !== 'Time'
+                );
+              }
+              
               const resetIndex = firstRealNoteIndex !== -1 ? firstRealNoteIndex : 0;
-              currentNoteIndicesRef.current.set(0, resetIndex);
-              onNoteProgress(0, resetIndex);
-              
-              onPlaybackEnd();
-            }, time);
-          }, notes!.reduce((sum, note) => sum + getDurationInSeconds(note.duration, note.dots), 0));
+              currentNoteIndicesRef.current.set(staffIndex, resetIndex);
+              onNoteProgress(staffIndex, resetIndex);
+            });
+            
+            onPlaybackEnd();
+          }, time);
+        }, maxDuration);
 
-          scheduledEventsRef.current.push(endEventId);
-        }
+        scheduledEventsRef.current.push(endEventId);
+        
 
         isInitializedRef.current = true;
         isPausedRef.current = false;
@@ -1113,13 +935,6 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ notes, staves, onNotePr
           currentNoteIndicesRef.current.set(staffIndex, resetIndex);
           onNoteProgress(staffIndex, resetIndex);
         });
-      } else if (notes && notes.length > 0) {
-        const firstRealNoteIndex = notes.findIndex(
-          note => note.note_type !== 'Clef' && note.note_type !== 'Time'
-        );
-        const resetIndex = firstRealNoteIndex !== -1 ? firstRealNoteIndex : 0;
-        currentNoteIndicesRef.current.set(0, resetIndex);
-        onNoteProgress(0, resetIndex);
       }
     },
 

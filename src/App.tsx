@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { Play, Pause, Square, Music, Upload, Download, Loader } from 'lucide-react';
@@ -7,37 +7,8 @@ import AudioPlayer, { INSTRUMENT_SAMPLES } from './components/AudioPlayer';
 import MenuDropdown from './components/MenuDropdown';
 import SettingsDialog from './components/SettingsDialog';
 import ExportDropdown from './components/ExportDropdown';
+import type { ParsedMusic } from './utils/musicMaps';
 import './App.css';
-
-type NoteType = 'Default' | 'Clef' | 'Chord' | 'Time';
-
-interface LilyPondNote {
-  pitch: string;
-  duration: string;
-  octave: number;
-  chord_notes?: Array<[string, number]>;
-  time_sig?: string;  // Time signature (e.g., "4/4", "3/4")
-  note_type?: NoteType;  // Type of note: Default, Clef, Chord, Time
-  group_start?: boolean;  // True if this note starts a slur group
-  group_end?: boolean;  // True if this note ends a slur group
-}
-
-interface Staff {
-  name?: string;
-  clef?: string;
-  notes?: LilyPondNote[];
-  lyrics?: any[];
-}
-
-interface ParsedMusic {
-  title?: string;
-  composer?: string;
-  tempo?: string;
-  key_signature?: string;
-  time_signature?: string;
-  notes?: LilyPondNote[];
-  staves?: Staff[];
-}
 
 function App() {
   const [musicData, setMusicData] = useState<ParsedMusic | null>(null);
@@ -56,6 +27,10 @@ function App() {
   });
   const [staffInstruments, setStaffInstruments] = useState<Map<number, string>>(new Map());
   const [staffVolumes, setStaffVolumes] = useState<Map<number, boolean>>(new Map());
+  const [showJianpu, setShowJianpu] = useState(() => {
+    const saved = localStorage.getItem('showJianpu');
+    return saved ? JSON.parse(saved) : false;
+  });
   const audioPlayerRef = useRef<any>(null);
   const exportButtonRef = useRef<HTMLDivElement>(null);
 
@@ -69,7 +44,7 @@ function App() {
       console.log('Sample content:', sampleContent);
       const parsed = await invoke<ParsedMusic>('parse_lilypond_content', { content: sampleContent });
       console.log('Parsed music data:', parsed);
-      const allNotes = parsed?.staves?.flatMap(staff => staff.notes || []) || parsed?.notes || [];
+      const allNotes = parsed?.staves?.flatMap(staff => staff.notes || []) || [];
       console.log('Number of notes:', allNotes.length);
       setMusicData(parsed);
       
@@ -113,14 +88,6 @@ function App() {
         });
         setStaffInstruments(newStaffInstruments);
         setStaffVolumes(newStaffVolumes);
-      } else if (parsed?.notes && parsed.notes.length > 0) {
-        // Find the first note that is not a Clef or Time marker
-        const firstRealNoteIndex = parsed.notes.findIndex(
-          note => note.note_type !== 'Clef' && note.note_type !== 'Time'
-        );
-        if (firstRealNoteIndex !== -1) {
-          initialIndices.set(0, firstRealNoteIndex);
-        }
       }
       setCurrentNoteIndices(initialIndices);
     } catch (error) {
@@ -182,14 +149,6 @@ function App() {
           });
           setStaffInstruments(newStaffInstruments);
           setStaffVolumes(newStaffVolumes);
-        } else if (parsed?.notes && parsed.notes.length > 0) {
-          // Find the first note that is not a Clef or Time marker
-          const firstRealNoteIndex = parsed.notes.findIndex(
-            note => note.note_type !== 'Clef' && note.note_type !== 'Time'
-          );
-          if (firstRealNoteIndex !== -1) {
-            initialIndices.set(0, firstRealNoteIndex);
-          }
         }
         setCurrentNoteIndices(initialIndices);
       }
@@ -288,6 +247,11 @@ function App() {
       localStorage.setItem('staffInstruments', JSON.stringify(instrumentsObj));
     }
   }, [staffInstruments]);
+
+  // Save showJianpu to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('showJianpu', JSON.stringify(showJianpu));
+  }, [showJianpu]);
 
   useEffect(() => {
     loadSampleMusic();
@@ -472,6 +436,17 @@ function App() {
                   <option value={6}>6</option>
                 </select>
               </div>
+              <div className="jianpu-toggle-control">
+                <label htmlFor="showJianpu">显示简谱:</label>
+                <button
+                  id="showJianpu"
+                  onClick={() => setShowJianpu(!showJianpu)}
+                  className={`jianpu-switch ${showJianpu ? 'jianpu-on' : 'jianpu-off'}`}
+                  title={showJianpu ? '简谱已开启' : '简谱已关闭'}
+                >
+                  <span className="jianpu-switch-slider"></span>
+                </button>
+              </div>
             </div>
 
             <div className="notation-container">
@@ -479,13 +454,13 @@ function App() {
                 musicData={musicData} 
                 currentNoteIndices={currentNoteIndices}
                 measuresPerRow={measuresPerRow}
+                showJianpu={showJianpu}
               />
             </div>
 
             <AudioPlayer
               ref={audioPlayerRef}
               staves={musicData?.staves}
-              notes={musicData?.notes}
               onNoteProgress={handleNoteProgress}
               onPlaybackEnd={handlePlaybackEnd}
               selectedInstrument={selectedInstrument}

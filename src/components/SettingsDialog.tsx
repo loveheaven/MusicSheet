@@ -17,6 +17,8 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
   const [rightMargin, setRightMargin] = useState(20);
   const [lyricFontSize, setLyricFontSize] = useState(12);
   const [lyricLineSpacing, setLyricLineSpacing] = useState(15);
+  const [pianoStaffSpacing, setPianoStaffSpacing] = useState(30); // 钢琴谱两个连起来的谱之间的行间距
+  const [pianoSystemSpacing, setPianoSystemSpacing] = useState(30); // 钢琴谱低音谱和下一行高音谱之间的行间距
   
   // WebDAV设置
   const [webdavUrl, setWebdavUrl] = useState('');
@@ -31,6 +33,8 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
       const savedRightMargin = localStorage.getItem('rightMargin');
       const savedLyricFontSize = localStorage.getItem('lyricFontSize');
       const savedLyricLineSpacing = localStorage.getItem('lyricLineSpacing');
+      const savedPianoStaffSpacing = localStorage.getItem('pianoStaffSpacing');
+      const savedPianoSystemSpacing = localStorage.getItem('pianoSystemSpacing');
       const savedWebdavUrl = localStorage.getItem('webdavUrl');
       const savedWebdavUsername = localStorage.getItem('webdavUsername');
       const savedWebdavPassword = localStorage.getItem('webdavPassword');
@@ -40,6 +44,8 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
       if (savedRightMargin) setRightMargin(Number(savedRightMargin));
       if (savedLyricFontSize) setLyricFontSize(Number(savedLyricFontSize));
       if (savedLyricLineSpacing) setLyricLineSpacing(Number(savedLyricLineSpacing));
+      if (savedPianoStaffSpacing) setPianoStaffSpacing(Number(savedPianoStaffSpacing));
+      if (savedPianoSystemSpacing) setPianoSystemSpacing(Number(savedPianoSystemSpacing));
       if (savedWebdavUrl) setWebdavUrl(savedWebdavUrl);
       if (savedWebdavUsername) setWebdavUsername(savedWebdavUsername);
       if (savedWebdavPassword) setWebdavPassword(savedWebdavPassword);
@@ -61,6 +67,8 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
     localStorage.setItem('rightMargin', rightMargin.toString());
     localStorage.setItem('lyricFontSize', lyricFontSize.toString());
     localStorage.setItem('lyricLineSpacing', lyricLineSpacing.toString());
+    localStorage.setItem('pianoStaffSpacing', pianoStaffSpacing.toString());
+    localStorage.setItem('pianoSystemSpacing', pianoSystemSpacing.toString());
     
     // 保存WebDAV设置
     localStorage.setItem('webdavUrl', webdavUrl);
@@ -70,7 +78,7 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
     
     // 触发自定义事件通知其他组件设置已更新
     window.dispatchEvent(new CustomEvent('settingsUpdated', {
-      detail: { leftMargin, rightMargin, lyricFontSize, lyricLineSpacing }
+      detail: { leftMargin, rightMargin, lyricFontSize, lyricLineSpacing, pianoStaffSpacing, pianoSystemSpacing }
     }));
     
     onClose();
@@ -164,10 +172,41 @@ const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
                   <span className="unit">px</span>
                 </div>
               </div>
+
+              <div className="setting-item">
+                <label>钢琴谱内部行间距 (px)</label>
+                <div className="number-input-group">
+                  <input
+                    type="number"
+                    min="10"
+                    max="100"
+                    value={pianoStaffSpacing}
+                    onChange={(e) => setPianoStaffSpacing(Number(e.target.value))}
+                  />
+                  <span className="unit">px</span>
+                </div>
+                <p className="setting-hint">钢琴谱中高音谱和低音谱之间的行间距</p>
+              </div>
+
+              <div className="setting-item">
+                <label>钢琴谱系统间距 (px)</label>
+                <div className="number-input-group">
+                  <input
+                    type="number"
+                    min="10"
+                    max="100"
+                    value={pianoSystemSpacing}
+                    onChange={(e) => setPianoSystemSpacing(Number(e.target.value))}
+                  />
+                  <span className="unit">px</span>
+                </div>
+                <p className="setting-hint">钢琴谱低音谱和下一行高音谱之间的行间距</p>
+              </div>
               
               <div className="setting-description">
                 <p>调整乐谱显示区域的左右边距，适应不同的屏幕尺寸。</p>
                 <p>自定义歌词的字体大小和行间距，以获得最佳的视觉效果。</p>
+                <p>调整钢琴谱的行间距，以获得最佳的视觉效果。</p>
               </div>
             </div>
           )}
