@@ -60,6 +60,8 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
   const [leftMargin, setLeftMargin] = React.useState(20);
   const [rightMargin, setRightMargin] = React.useState(20);
   const [containerWidth, setContainerWidth] = React.useState(800);
+  const [lyricFontSize, setLyricFontSize] = React.useState(12);
+  const [lyricLineSpacing, setLyricLineSpacing] = React.useState(15);
 
   // 监听窗口大小变化
   useEffect(() => {
@@ -106,6 +108,12 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
       if (event.detail.rightMargin !== undefined) {
         setRightMargin(event.detail.rightMargin);
       }
+      if (event.detail.lyricFontSize !== undefined) {
+        setLyricFontSize(event.detail.lyricFontSize);
+      }
+      if (event.detail.lyricLineSpacing !== undefined) {
+        setLyricLineSpacing(event.detail.lyricLineSpacing);
+      }
     };
 
     window.addEventListener('settingsUpdated', handleSettingsUpdate as EventListener);
@@ -113,8 +121,12 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     // 从localStorage加载初始值
     const savedLeftMargin = localStorage.getItem('leftMargin');
     const savedRightMargin = localStorage.getItem('rightMargin');
+    const savedLyricFontSize = localStorage.getItem('lyricFontSize');
+    const savedLyricLineSpacing = localStorage.getItem('lyricLineSpacing');
     if (savedLeftMargin) setLeftMargin(Number(savedLeftMargin));
     if (savedRightMargin) setRightMargin(Number(savedRightMargin));
+    if (savedLyricFontSize) setLyricFontSize(Number(savedLyricFontSize));
+    if (savedLyricLineSpacing) setLyricLineSpacing(Number(savedLyricLineSpacing));
 
     return () => {
       window.removeEventListener('settingsUpdated', handleSettingsUpdate as EventListener);
@@ -243,7 +255,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
       context.fillText('Music notation rendering error', 50, 100);
     }
 
-  }, [musicData, currentNoteIndices, measuresPerRow, containerWidth, leftMargin, rightMargin]);
+  }, [musicData, currentNoteIndices, measuresPerRow, containerWidth, leftMargin, rightMargin, lyricFontSize, lyricLineSpacing]);
 
   const renderMultipleStaves = (renderer: any, musicData: ParsedMusic) => {
     const staves = musicData.staves || [];
@@ -914,7 +926,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
         if (!lyric.text_nodes || lyric.text_nodes.length === 0) return;
         
         context.fillStyle = '#000000';
-        context.font = '12px Arial';
+        context.font = `${lyricFontSize}px Arial`;
         context.textAlign = 'center';
         
         let noteIndex = 0;
@@ -938,7 +950,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
           const note = allNotes[noteIndex];
           const rowIdx = noteToRowMap[noteIndex];
           
-          const lyricY = rowYPositions[rowIdx] + lyricIdx * 15;
+          const lyricY = rowYPositions[rowIdx] + lyricIdx * lyricLineSpacing;
           
           // Get note's x position
           let noteX = 0;
