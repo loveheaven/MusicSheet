@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { Renderer, Stave, StaveNote, Voice, Formatter, Accidental, Flow, StaveConnector, Beam, Dot, Curve } from 'vexflow';
+import { Renderer, Stave, StaveNote, Voice, Formatter, Accidental, Flow, StaveConnector, Beam, Dot, Curve, TextBracket } from 'vexflow';
 import { durationMap, pitchMap, jianpuMap, vexFlowDurationMap } from '../utils/musicMaps';
 import type { LilyPondNote, Lyric, VoiceData, Staff, ParsedMusic } from '../utils/musicMaps';
 
@@ -25,7 +25,6 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     const updateContainerWidth = () => {
       if (containerRef.current) {
         const width = containerRef.current.offsetWidth;
-        console.log('Container width updated:', width);
         setContainerWidth(width > 0 ? width : 800);
       }
     };
@@ -163,6 +162,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
           mod.constructor.name === '_Dot' || mod.getCategory?.() === 'dots'
         );
       }
+      const linesAfter = getLinesAfter(baseDuration, hasDots);
       if(hasDots && parseInt(baseDuration) === 2) {
         hasDots = false;
       }
@@ -172,7 +172,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
         dotsAbove: 0, 
         dotsBelow: 0, 
         durationLines, 
-        linesAfter: 0, 
+        linesAfter: linesAfter, 
         hasDots 
       };
     }
@@ -236,9 +236,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     if(hasDots && parseInt(baseDuration) === 2) {
       hasDots = false;
     }
-    if(jianpu === '7') {
-      console.log('jianpu', jianpu, hasDots, linesAfter, durationLines, durationStr);
-    }
+   
     return { 
       number: jianpu, 
       dotsAbove, 
@@ -430,13 +428,13 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     const clefMarker = flattenedNotes.find((note: any) => note._isClefMarker);
     if (clefMarker) {
       clefToDisplay = clefMarker._clefType;
-      console.log(`Measure ${measureIndex}: Found clef marker for ${clefToDisplay}`);
+
     }
     
     const timeSignatureMarker = flattenedNotes.find((note: any) => note._isTimeSignatureMarker);
     if (timeSignatureMarker) {
       timeSignatureToDisplay = timeSignatureMarker._timeSignature;
-      console.log(`Measure ${measureIndex}: Found time signature marker for ${timeSignatureToDisplay}`);
+
     }
     
     // Add clef if needed
@@ -455,7 +453,6 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
         try {
           measureStave.addKeySignature(musicData.key_signature);
         } catch (error) {
-          console.warn('Invalid key signature:', musicData.key_signature, error);
           measureStave.addKeySignature('C');
         }
       }
@@ -486,7 +483,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
   ): any => {
     // Check if this is a clef marker
     if (note.note_type === 'Clef' && note.clef) {
-      console.log(`Found clef marker at note ${noteIndex}: ${note.clef}`);
+
       return {
         _isClefMarker: true,
         _clefType: note.clef,
@@ -496,12 +493,31 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
 
     // Check if this is a time signature marker
     if (note.note_type === 'Time' && note.time_sig) {
-      console.log(`Found time signature marker at note ${noteIndex}: ${note.time_sig}`);
+
       return {
         _isTimeSignatureMarker: true,
         _timeSignature: note.time_sig,
         getTicks: () => ({ value: () => 0 })
       };
+    }
+
+    // Check if this is a key signature marker
+    if (note.note_type === 'Key' && note.key_sig) {
+
+      return {
+        _isKeyMarker: true,
+        _keySignature: note.key_sig,
+        getTicks: () => ({ value: () => 0 })
+      };
+    }
+
+    if (note.note_type === 'Ottava') {
+
+      return {
+        _isOttavaMarker: true,
+        _ottava: note.ottava,
+        getTicks: () => ({ value: () => 0 })
+      } as any;
     }
 
     let staveNote: any;
@@ -745,6 +761,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
   const drawSlursForNotes = (context: any, notes: any[]) => {
     const slurs: Curve[] = [];
     let slurStartNote: any = null;
+    let slurStartIndex = -1;
     
     for (let i = 0; i < notes.length; i++) {
       const note = notes[i];
@@ -752,25 +769,180 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
       // Check if this note starts a slur group
       if ((note as any)._groupStart) {
         slurStartNote = note;
+        slurStartIndex = i;
       }
       
       // Check if this note ends a slur group
       if ((note as any)._groupEnd && slurStartNote) {
-        // Create a slur from slurStartNote to current note
-        const slur = new Curve(slurStartNote, note, {
-          cps: [
-            { x: 0, y: 10 },
-            { x: 0, y: 10 }
-          ]
-        });
-        slurs.push(slur);
+        // Check if slur crosses rows (different _rowIndex)
+        const startRow = (slurStartNote as any)._rowIndex;
+        const endRow = (note as any)._rowIndex;
+        
+        if (startRow !== undefined && endRow !== undefined && startRow !== endRow) {
+          // Cross-row slur: draw slur segments that extend to staff boundaries
+          // Collect all slur notes by row
+          const notesByRow: Map<number, any[]> = new Map();
+          for (let j = slurStartIndex; j <= i; j++) {
+            const noteRow = (notes[j] as any)._rowIndex;
+            if (noteRow !== undefined) {
+              if (!notesByRow.has(noteRow)) {
+                notesByRow.set(noteRow, []);
+              }
+              notesByRow.get(noteRow)!.push(notes[j]);
+            }
+          }
+          
+          // For each row, we need to draw slurs that extend to staff boundaries
+          // This requires custom drawing using lower-level canvas APIs
+          notesByRow.forEach((rowNotes, rowIdx) => {
+            if (rowIdx === startRow) {
+              // First row: from first slur note to end of staff (right edge)
+              const firstNote = rowNotes[0];
+              const lastNote = rowNotes[rowNotes.length - 1];
+              
+              // Get the position of the last note (or first if only one)
+              const noteToUse = lastNote;
+              const boundingBox = noteToUse.getBoundingBox();
+              const startX = firstNote.getAbsoluteX();
+              const endX = boundingBox.getX() + boundingBox.getW() + 100; // Extend 100px to the right
+              const y = boundingBox.getY() - 10;
+              
+              // Draw a custom slur curve extending to the right
+              context.beginPath();
+              context.moveTo(startX, y);
+              const cp1x = startX + (endX - startX) * 0.3;
+              const cp1y = y - 10;
+              const cp2x = startX + (endX - startX) * 0.7;
+              const cp2y = y - 10;
+              context.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, endX, y);
+              context.stroke();
+            } else if (rowIdx === endRow) {
+              // Last row: from start of staff (left edge) to last slur note
+              const lastNote = rowNotes[rowNotes.length - 1];
+              const boundingBox = lastNote.getBoundingBox();
+              const startX = boundingBox.getX() - 100; // Extend 100px to the left
+              const endX = lastNote.getAbsoluteX();
+              const y = boundingBox.getY() - 10;
+              
+              // Draw a custom slur curve extending from the left
+              context.beginPath();
+              context.moveTo(startX, y);
+              const cp1x = startX + (endX - startX) * 0.3;
+              const cp1y = y - 10;
+              const cp2x = startX + (endX - startX) * 0.7;
+              const cp2y = y - 10;
+              context.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, endX, y);
+              context.stroke();
+            } else {
+              // Middle row: from start of staff to end of staff
+              if (rowNotes.length > 0) {
+                const firstNote = rowNotes[0];
+                const boundingBox = firstNote.getBoundingBox();
+                const startX = boundingBox.getX() - 100;
+                const endX = boundingBox.getX() + 200; // Span across
+                const y = boundingBox.getY() - 10;
+                
+                context.beginPath();
+                context.moveTo(startX, y);
+                const cp1x = startX + (endX - startX) * 0.3;
+                const cp1y = y - 10;
+                const cp2x = startX + (endX - startX) * 0.7;
+                const cp2y = y - 10;
+                context.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, endX, y);
+                context.stroke();
+              }
+            }
+          });
+        } else {
+          // Same-row slur: draw normally
+          const slur = new Curve(slurStartNote, note, {
+            cps: [
+              { x: 0, y: 10 },
+              { x: 0, y: 10 }
+            ]
+          });
+          slurs.push(slur);
+        }
         slurStartNote = null;
+        slurStartIndex = -1;
       }
     }
     
     // Draw slurs
     slurs.forEach((slur) => {
       slur.setContext(context).draw();
+    });
+  };
+
+  /**
+   * Draw ottava brackets for notes
+   * @param context - Canvas context
+   * @param ottavaMarkers - Array of ottava marker info
+   * @param notes - Array of notes
+   * @param staffY - Y position of the staff
+   */
+  const drawOttavaForNotes = (
+    context: any,
+    ottavaMarkers: Array<{
+      startNoteIndex: number;
+      endNoteIndex: number;
+      ottavaValue: number;
+    }>,
+    notes: any[],
+    staffY: number
+  ) => {
+    if (!ottavaMarkers || ottavaMarkers.length === 0) return;
+
+    ottavaMarkers.forEach((marker) => {
+      const { startNoteIndex, endNoteIndex, ottavaValue } = marker;
+      
+
+      
+      if (startNoteIndex >= notes.length || endNoteIndex > notes.length) {
+        return;
+      }
+
+      try {
+        const startNote = notes[startNoteIndex];
+        const endNote = notes[Math.min(endNoteIndex, notes.length - 1)];
+
+        
+        // Determine ottava label and position
+        // VexFlow TextBracket positions: 1 = top, -1 = bottom
+        let ottavaLabel = '';
+        let position = 1; // Default to top
+        
+        if (ottavaValue === 1) {
+          ottavaLabel = '8va';
+          position = 1; // TOP
+        } else if (ottavaValue === -1) {
+          ottavaLabel = '8vb';
+          position = -1; // BOTTOM
+        } else if (ottavaValue === 2) {
+          ottavaLabel = '15ma';
+          position = 1; // TOP
+        } else if (ottavaValue === -2) {
+          ottavaLabel = '15mb';
+          position = -1; // BOTTOM
+        } else {
+          return; // Unknown ottava value
+        }
+
+        // Create and draw TextBracket
+        // Use superscript for the ottava label (8va, 8vb, etc.)
+        const textBracket = new TextBracket({
+          start: startNote,
+          stop: endNote,
+          text: '',
+          superscript: ottavaLabel,
+          position: position
+        });
+        
+        textBracket.setContext(context).draw();
+      } catch (e) {
+        console.error('Error drawing ottava bracket:', e);
+        return;
+      }
     });
   };
 
@@ -940,11 +1112,9 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
   };
 
   useEffect(() => {
-    console.log('MusicNotation useEffect triggered');
     console.log('musicData:', musicData);
     
     if (!containerRef.current) {
-      console.log('Early return: no container');
       return;
     }
 
@@ -952,7 +1122,6 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     const hasStaves = musicData?.staves && musicData.staves.length > 0;
     
     if (!hasStaves) {
-      console.log('Early return: no staves');
       return;
     }
 
@@ -1023,29 +1192,15 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
         let currentTicks = 0;
 
         for (const note of voiceNotes) {
-        // Check if this is a clef marker
-        if ((note as any)._isClefMarker) {
-          // If current measure is full, start a new measure with the clef marker
+        // Check if this is a clef or time signature marker
+        if ((note as any)._isClefMarker || (note as any)._isTimeSignatureMarker || (note as any)._isKeyMarker || (note as any)._isOttavaMarker) {
+          // If current measure is full, start a new measure with the marker
           if (currentTicks >= ticksPerMeasure && currentMeasure.length > 0) {
             measures.push([...currentMeasure]);
             currentMeasure = [note];
             currentTicks = 0;
           } else {
-            // Add clef marker to current measure without counting ticks
-            currentMeasure.push(note);
-          }
-          continue;
-        }
-
-        // Check if this is a time signature marker
-        if ((note as any)._isTimeSignatureMarker) {
-          // If current measure is full, start a new measure with the time signature marker
-          if (currentTicks >= ticksPerMeasure && currentMeasure.length > 0) {
-            measures.push([...currentMeasure]);
-            currentMeasure = [note];
-            currentTicks = 0;
-          } else {
-            // Add time signature marker to current measure without counting ticks
+            // Add marker to current measure without counting ticks
             currentMeasure.push(note);
           }
           continue;
@@ -1114,18 +1269,43 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
       lyrics: any[];
       notesPerRow: Array<any[]>; // notes for each row
       rowYPositions: number[]; // Y position for each row
-      jianpuYPositions: number[]; // Y position for jianpu
     }> = [];
+
+    // Store ottava rendering info for later (after all notes are drawn)
+    // This will track ottava markers globally across all rows
+    const ottavaRenderingInfo: Array<{
+      staffIndex: number;
+      voiceIdx: number;
+      ottavaMarkers: Array<{
+        startNoteIndex: number;
+        endNoteIndex: number;
+        ottavaValue: number;
+      }>;
+    }> = [];
+    
+    // Store all rendered notes for ottava drawing (independent of lyrics/jianpu)
+    const allRenderedNotes: Array<{
+      staffIndex: number;
+      voiceIdx: number;
+      notesPerRow: any[][];
+    }> = [];
+    
+    // Store all notes globally for cross-row slur drawing
+    const allNotesGlobalPerStaffVoice: Map<string, any[]> = new Map();
 
     // Render each row
     measureRows.forEach((startMeasure, rowIndex) => {
       const endMeasure = Math.min(startMeasure + measuresPerRow, maxMeasures);
-      const rowY = 40 + rowIndex * (totalStaffHeight + systemSpacing);
+      const rowY = 40 + rowIndex * (totalStaffHeight + systemSpacing); // the start Y position for this row
 
+      const bottomMeasure: number[] = [];
       // Render each staff in this row
       staves.forEach((staff, staffIndex) => {
         const staffY = rowY + staffIndex * (staveHeight + staffSpacing);
         const rowStaves: Stave[] = [];
+        
+        // Collect all notes from all measures in this row for cross-measure slur drawing
+        const allNotesInRowPerVoice: Map<number, any[]> = new Map();
 
         // Render measures for this staff
         for (let measureIdx = startMeasure; measureIdx < endMeasure; measureIdx++) {
@@ -1153,7 +1333,8 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
             context
           );
           rowStaves.push(measureStave);
-
+          bottomMeasure.push(measureStave.getYForLine(4));
+          
           // Render notes for this measure - handle multiple voices
           const staffVoices = staffMeasures[staffIndex];
           const voicesToRender: any[] = [];
@@ -1163,7 +1344,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
             if (measureIdx < voiceMeasures.length && voiceMeasures[measureIdx].length > 0) {
               // Filter out clef markers and time signature markers - they shouldn't be rendered as notes
               const measureNotes = voiceMeasures[measureIdx].filter((note: any) => 
-                !note._isClefMarker && !note._isTimeSignatureMarker
+                !note._isClefMarker && !note._isTimeSignatureMarker && !note._isKeyMarker && !note._isOttavaMarker
               );
               
               if (measureNotes.length === 0) {
@@ -1185,7 +1366,25 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
 
               voice.setMode(Voice.Mode.SOFT);
               voice.addTickables(measureNotes);
-              voicesToRender.push({ voice, measureNotes });
+              voicesToRender.push({ voice, measureNotes, voiceIdx });
+              
+              // Mark notes with their row index for cross-row slur detection
+              measureNotes.forEach((n: any) => {
+                n._rowIndex = rowIndex;
+              });
+              
+              // Collect notes for cross-measure slur drawing (per row)
+              if (!allNotesInRowPerVoice.has(voiceIdx)) {
+                allNotesInRowPerVoice.set(voiceIdx, []);
+              }
+              allNotesInRowPerVoice.get(voiceIdx)!.push(...measureNotes);
+              
+              // Collect notes globally for cross-row slur drawing
+              const globalKey = `${staffIndex}-${voiceIdx}`;
+              if (!allNotesGlobalPerStaffVoice.has(globalKey)) {
+                allNotesGlobalPerStaffVoice.set(globalKey, []);
+              }
+              allNotesGlobalPerStaffVoice.get(globalKey)!.push(...measureNotes);
             }
           }
 
@@ -1210,7 +1409,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
             
             // Calculate minimum width needed based on note count
             const totalNoteCount = voicesToRender.reduce((sum, v) => sum + v.measureNotes.length, 0);
-            const minWidthPerNote = 25; // Minimum pixels per note
+            const minWidthPerNote = 20; // Minimum pixels per note
             const idealWidth = totalNoteCount * minWidthPerNote;
             
             // Use the larger of available width or ideal width, but cap at available
@@ -1220,9 +1419,31 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
             const allVoices = voicesToRender.map(v => v.voice);
             formatter.joinVoices(allVoices).format(allVoices, formatWidth);
             
-            // Draw all voices and their beams/slurs
-            voicesToRender.forEach(({ voice, measureNotes }) => {
-              drawVoiceWithDecorations(context, voice, measureStave, measureNotes);
+            // Create beams first (before drawing)
+            const allBeams: Beam[] = [];
+            voicesToRender.forEach(({ measureNotes }) => {
+              const beams = createBeamsForNotes(measureNotes);
+              allBeams.push(...beams);
+            });
+            
+            // Draw all voices
+            voicesToRender.forEach(({ voice }) => {
+              voice.draw(context, measureStave);
+            });
+            
+            // Draw beams after voices
+            allBeams.forEach((beam) => {
+              beam.setContext(context).draw();
+            });
+            
+            // Draw arpeggios
+            voicesToRender.forEach(({ measureNotes }) => {
+              for (let i = 0; i < measureNotes.length; i++) {
+                const note = measureNotes[i];
+                if ((note as any)._arpeggio) {
+                  drawArpeggio(note, context);
+                }
+              }
             });
           }
         }
@@ -1253,9 +1474,8 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
 
       // Collect lyric and jianpu rendering info for this row
       staves.forEach((staff, staffIndex) => {
-        const staffY = rowY + staffIndex * (staveHeight + staffSpacing);
-        const lyricStartY = staffY + staveHeight + 15;
-        const jianpuY = staffY + staveHeight + 5; // Jianpu between staff and lyrics
+        const staffY = rowY + staffIndex * (staveHeight + staffSpacing); // the Y position of the staff
+        const lyricStartY = bottomMeasure[staffIndex];
         
         const currentStaffVoices = staffVoicesData[staffIndex];
         
@@ -1269,10 +1489,24 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
             const voiceMeasures = staffMeasures[staffIndex][voiceIdx];
             if (measureIdx < voiceMeasures.length) {
               const measureNotes = voiceMeasures[measureIdx].filter((note: any) => 
-                !note._isClefMarker && !note._isTimeSignatureMarker
+                !note._isClefMarker && !note._isTimeSignatureMarker && !note._isKeyMarker && !note._isOttavaMarker
               );
               notesInRow.push(...measureNotes);
             }
+          }
+          
+          // Always collect notes for ottava rendering (even if no lyrics/jianpu)
+          if (notesInRow.length > 0) {
+            let noteEntry = allRenderedNotes.find(e => e.staffIndex === staffIndex && e.voiceIdx === voiceIdx);
+            if (!noteEntry) {
+              noteEntry = {
+                staffIndex,
+                voiceIdx,
+                notesPerRow: []
+              };
+              allRenderedNotes.push(noteEntry);
+            }
+            noteEntry.notesPerRow.push(notesInRow);
           }
           
           // Create entry for this staff/voice (for both lyrics and jianpu)
@@ -1284,20 +1518,148 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
                 voiceIdx,
                 lyrics,
                 notesPerRow: [],
-                rowYPositions: [],
-                jianpuYPositions: []
+                rowYPositions: []
               };
               lyricRenderingInfo.push(entry);
             }
             
             entry.notesPerRow.push(notesInRow);
             entry.rowYPositions.push(lyricStartY);
-            entry.jianpuYPositions.push(jianpuY);
           }
         });
       });
+      
+    });
+    
+    // Collect ottava rendering info AFTER all rows are rendered
+    // Use the notes collected during rendering (from lyricRenderingInfo)
+    // to ensure we use the correctly positioned notes
+    staves.forEach((staff, staffIndex) => {
+      const currentStaffVoices = staffVoicesData[staffIndex];
+      
+      currentStaffVoices.voices.forEach((voiceData: any, voiceIdx: number) => {
+        let globalNoteIndex = 0;
+        let ottavaStartIndex = -1;
+        let currentOttavaValue = 0;
+        const ottavaMarkersForVoice: Array<{
+          startNoteIndex: number;
+          endNoteIndex: number;
+          ottavaValue: number;
+        }> = [];
+        
+        // Process ALL measures for this voice (across all rows)
+        for (let measureIdx = 0; measureIdx < maxMeasures; measureIdx++) {
+          const voiceMeasures = staffMeasures[staffIndex][voiceIdx];
+          if (measureIdx < voiceMeasures.length) {
+            const measureNotes = voiceMeasures[measureIdx];
+            
+            for (const note of measureNotes) {
+              if (note._isOttavaMarker) {
+                if (note._ottava !== 0) {
+                  // Start of ottava
+                  if (ottavaStartIndex === -1) {
+                    ottavaStartIndex = globalNoteIndex;
+                    currentOttavaValue = note._ottava;
+                  }
+                } else {
+                  // End of ottava
+                  if (ottavaStartIndex !== -1) {
+                    ottavaMarkersForVoice.push({
+                      startNoteIndex: ottavaStartIndex,
+                      endNoteIndex: globalNoteIndex,
+                      ottavaValue: currentOttavaValue
+                    });
+                    ottavaStartIndex = -1;
+                    currentOttavaValue = 0;
+                  }
+                }
+              } else if (!note._isClefMarker && !note._isTimeSignatureMarker && !note._isKeyMarker) {
+                globalNoteIndex++;
+              }
+            }
+          }
+        }
+        
+        // Create entry for ottava rendering
+        if (ottavaMarkersForVoice.length > 0) {
+          ottavaRenderingInfo.push({
+            staffIndex,
+            voiceIdx,
+            ottavaMarkers: ottavaMarkersForVoice
+          });
+        }
+      });
+    });
+    
+    // Draw ottava brackets using notes from allRenderedNotes
+    // These notes are collected during rendering and have correct positions
+    // Handle ottava that spans multiple rows by splitting into segments
+    ottavaRenderingInfo.forEach((ottavaEntry) => {
+      // Find the note collection for this staff/voice
+      const noteEntry = allRenderedNotes.find(
+        e => e.staffIndex === ottavaEntry.staffIndex && e.voiceIdx === ottavaEntry.voiceIdx
+      );
+      
+      if (noteEntry) {
+        // Process each ottava marker
+        ottavaEntry.ottavaMarkers.forEach((marker) => {
+          const { startNoteIndex, endNoteIndex, ottavaValue } = marker;
+          
+          // Build a map of note index to row index
+          let globalNoteIndex = 0;
+          const noteIndexToRow: number[] = [];
+          noteEntry.notesPerRow.forEach((rowNotes, rowIdx) => {
+            rowNotes.forEach(() => {
+              noteIndexToRow.push(rowIdx);
+              globalNoteIndex++;
+            });
+          });
+          
+
+          
+          // Find which rows the ottava spans
+          const startRow = noteIndexToRow[startNoteIndex];
+          const endRow = noteIndexToRow[Math.min(endNoteIndex - 1, noteIndexToRow.length - 1)];
+          
+          if (startRow === undefined || endRow === undefined) {
+            return;
+          }
+          
+          // Split ottava into segments for each row
+          for (let rowIdx = startRow; rowIdx <= endRow; rowIdx++) {
+            const rowNotes = noteEntry.notesPerRow[rowIdx];
+            
+            // Calculate the start and end index within this row
+            let rowStartGlobalIndex = 0;
+            for (let i = 0; i < rowIdx; i++) {
+              rowStartGlobalIndex += noteEntry.notesPerRow[i].length;
+            }
+            
+            // Find the segment of ottava in this row
+            const segmentStartInRow = Math.max(startNoteIndex - rowStartGlobalIndex, 0);
+            const segmentEndInRow = Math.min(endNoteIndex - 1 - rowStartGlobalIndex, rowNotes.length - 1);
+            
+            if (segmentStartInRow <= segmentEndInRow && segmentStartInRow < rowNotes.length) {
+              const segmentMarker = {
+                startNoteIndex: segmentStartInRow,
+                endNoteIndex: segmentEndInRow + 1,
+                ottavaValue
+              };
+              
+              drawOttavaForNotes(context, [segmentMarker], rowNotes, 0);
+            }
+          }
+        });
+      }
     });
 
+    // Draw slurs after all notes are rendered (including cross-row slurs)
+    allNotesGlobalPerStaffVoice.forEach((allNotes) => {
+      if (allNotes.length > 0) {
+        drawSlursForNotes(context, allNotes);
+      }
+    });
+    
     // Draw lyrics after all notes are rendered
     // This allows lyrics to span across multiple rows
     lyricRenderingInfo.forEach((info) => {
@@ -1310,7 +1672,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
       notesPerRow.forEach((notes, rowIdx) => {
         notes.forEach(note => {
           // Skip clef markers, time signature markers, and rests                
-          if (!(note._isClefMarker || note._isTimeSignatureMarker )) {
+          if (!(note._isClefMarker || note._isTimeSignatureMarker || note._isKeyMarker || note._isOttavaMarker)) {
             allNotes.push(note);
             noteToRowMap.push(rowIdx);
           }
@@ -1318,7 +1680,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
       });
       
       if (allNotes.length === 0) return;
-      
+
       // Calculate the lowest point of notes for each row separately
       // This is used to position jianpu and lyrics below the notes
       const jianpuPadding = lyricFontSize + 3;
@@ -1339,13 +1701,21 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
             // Ignore errors getting bounding box
           }
         }
-        maxNoteBottomPerRow[rowIdx] = maxNoteBottom > 0 ? maxNoteBottom + jianpuPadding : rowYPositions[rowIdx] + staveHeight + 5;        
+        
+        if (maxNoteBottom < rowYPositions[rowIdx]) {
+          // console.log('maxNoteBottom', maxNoteBottom, rowYPositions[rowIdx], rowIdx);
+          maxNoteBottomPerRow[rowIdx] = rowYPositions[rowIdx] + jianpuPadding;
+        } else {
+          maxNoteBottomPerRow[rowIdx] = maxNoteBottom > 0 ? maxNoteBottom + jianpuPadding : rowYPositions[rowIdx] + staveHeight + 5;        
+        }
       }
       
       
       // Draw jianpu (simplified notation) if enabled
-      if (showJianpu) {
+      if (showJianpu) {    
         const maxJianpuBottomPerRow: number[] = [];
+        // if not drawing Jianpu, use maxNoteBottomPerRow as Lyrics bottom; if drawing, we have to
+        // add the duration lines and dots below as Lyrics bottom
         const maxLyricsBottomPerRow: number[] = [];
 
         // Use Map to store note -> jianpuInfo mapping
@@ -1368,10 +1738,11 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
           let maxLyricsBottom = maxJianpuBottomPerRow[rowIdx];
           for (const note of notesPerRow[rowIdx]) {
             const jianpuInfo = jianpuInfos.get(note);
-            maxLyricsBottom = Math.max(maxLyricsBottom, maxJianpuBottomPerRow[rowIdx] 
-              + (jianpuInfo.durationLines > 0 ? dotVerticalSpacing * jianpuInfo.durationLines : 0)
-              + (jianpuInfo.dotsBelow > 0 ? dotVerticalSpacing * jianpuInfo.dotsBelow : 0));
-            
+            if (jianpuInfo) {
+              maxLyricsBottom = Math.max(maxLyricsBottom, maxJianpuBottomPerRow[rowIdx] 
+                + (jianpuInfo.durationLines > 0 ? dotVerticalSpacing * jianpuInfo.durationLines : 0)
+                + (jianpuInfo.dotsBelow > 0 ? dotVerticalSpacing * jianpuInfo.dotsBelow : 0));
+            }
           }
           maxLyricsBottomPerRow[rowIdx] = maxLyricsBottom > 0? maxLyricsBottom : rowYPositions[rowIdx] + staveHeight + 5;
         }

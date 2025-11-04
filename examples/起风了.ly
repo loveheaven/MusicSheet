@@ -42,7 +42,7 @@ scaleC = \relative c'{ c d e f g a b }
 PartPOneVoiceOne = \fixed c' {
     \clef "treble" 
     \time 4/4 
-    \key f \major | % 1
+    \key f \major 
     \tempo 4=70 
      
     e16 f g a8 c16 c' a2 r16 | % 2
@@ -162,7 +162,7 @@ PartPOneVoiceOne = \fixed c' {
 PartPOneVoiceFive = \fixed c {
     \clef "bass" 
     \time 4/4 
-    \key f \major | % 1
+    \key f \major  % 1
      
     bes,8 f a4 c8 e g4| % 2
     a,8 e g4 d8 f a4| % 3

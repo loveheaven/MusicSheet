@@ -109,8 +109,9 @@ duration_number = @{ "128" | "64" | "32" | "16" | "8" | "4" | "2" | "1" }
 duration_dots = @{ "."* }
 duration = { duration_number ~ duration_dots }
 
-// Musical note
-musical_note = { note_name ~ octave_modifier ~ duration? }
+// Musical note with optional slur marker
+slur_marker = { "~" }
+musical_note = { note_name ~ octave_modifier ~ duration? ~ slur_marker? }
 
 // Rest
 rest_name = @{ "r" | "s" }
@@ -187,7 +188,7 @@ music_sequence = { music_item* }
 // New staff/voice commands - support both Staff and Voice
 context_type = @{ "Staff" | "Voice" | "PianoStaff" | "ChoirStaff" | "GrandStaff" | "StaffGroup" }
 new_context = { "\\new" ~ context_type ~ ("=" ~ (identifier | string_literal))? }
-new_voice = { "\\new" ~ "Voice" ~ ("=" ~ (identifier | string_literal))? ~ (simple_staff | variable_reference) }
+new_voice = { "\\new" ~ "Voice" ~ ("=" ~ (identifier | string_literal))? ~ (simple_staff | music_mode | variable_reference) }
 new_lyrics = { "\\new" ~ "Lyrics" ~ ("=" ~ (identifier | string_literal))? ~ ((lyricsto ~ ("{" ~ lyric_sequence ~ "}" | variable_reference)) | lyricmode)? }
 lyricsto = { "\\lyricsto" ~ string_literal }
 addlyrics = { "\\addlyrics" ~ "{" ~ lyric_sequence ~ "}" }
@@ -205,7 +206,7 @@ layout_block = { "\\layout" ~ "{" ~ (!"}" ~ ANY)* ~ "}" }
 midi_block = { "\\midi" ~ "{" ~ (!"}" ~ ANY)* ~ "}" }
 
 // Simultaneous music (parallel staves)
-simultaneous_music = { "<<" ~ (staff | simple_staff | music_mode | new_lyrics)* ~ ">>" }
+simultaneous_music = { "<<" ~ (staff | simple_staff | music_mode | new_voice | new_lyrics)* ~ ">>" }
 
 // Piano staff - contains simultaneous music
 piano_staff = { "\\new" ~ "PianoStaff" ~ ("=" ~ (identifier | string_literal))? ~ simultaneous_music }

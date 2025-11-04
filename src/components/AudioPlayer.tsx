@@ -4,6 +4,11 @@ import { Midi } from '@tonejs/midi';
 import { durationToSecondsMap } from '../utils/musicMaps';
 import type { LilyPondNote, Staff } from '../utils/musicMaps';
 
+// Helper function to check if a note is non-playable (metadata or rest)
+const isNonPlayableNote = (note: LilyPondNote): boolean => {
+  return note.note_type === 'Clef' || note.note_type === 'Time' || note.note_type === 'Key' || note.note_type === 'Ottava';
+};
+
 // Instrument sample mappings - Complete list from tonejs-instruments
 export const INSTRUMENT_SAMPLES = {
   'bass-electric': {
@@ -384,7 +389,7 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
             let transportTime = 0;
             voice.base.notes.forEach((note) => {
               // Skip non-playable notes
-              if (note.note_type === 'Clef' || note.note_type === 'Time') {
+              if (isNonPlayableNote(note)) {
                 return;
               }
 
@@ -409,7 +414,7 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
           let transportTime = 0;
           staff.notes!.forEach((note) => {
             // Skip non-playable notes
-            if (note.note_type === 'Clef' || note.note_type === 'Time') {
+            if (isNonPlayableNote(note)) {
               return;
             }
 
@@ -548,7 +553,7 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
             let currentTime = 0;
             voice.base.notes.forEach((note) => {
               // Skip non-playable notes
-              if (note.note_type === 'Clef' || note.note_type === 'Time' || note.pitch === 'r') {
+              if (isNonPlayableNote(note)|| note.pitch === 'r') {
                 const duration = durationToSeconds(note.duration, note.dots);
                 currentTime += duration;
                 return;
@@ -602,7 +607,7 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
           let currentTime = 0;
           staff.notes!.forEach((note) => {
             // Skip non-playable notes
-            if (note.note_type === 'Clef' || note.note_type === 'Time' || note.pitch === 'r') {
+            if (isNonPlayableNote(note) || note.pitch === 'r') {
               const duration = durationToSeconds(note.duration, note.dots);
               currentTime += duration;
               return;
@@ -713,11 +718,11 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
             // For voices, find first real note in first voice
             const firstVoice = staff.voices![0];
             firstRealNoteIndex = firstVoice.base.notes.findIndex(
-              note => note.note_type !== 'Clef' && note.note_type !== 'Time'
+              note => !isNonPlayableNote(note)
             );
           } else if (hasNotes) {
             firstRealNoteIndex = staff.notes!.findIndex(
-              note => note.note_type !== 'Clef' && note.note_type !== 'Time'
+              note => !isNonPlayableNote(note)
             );
           }
           currentNoteIndicesRef.current.set(staffIndex, firstRealNoteIndex !== -1 ? firstRealNoteIndex : 0);
@@ -743,7 +748,7 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
               let transportTime = 0;
               voice.base.notes.forEach((note, noteIdx) => {
                 // Skip non-playable notes
-                if (note.note_type === 'Clef' || note.note_type === 'Time') {
+                if (isNonPlayableNote(note)) {
                   return;
                 }
 
@@ -782,7 +787,7 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
             let transportTime = 0;
             staff.notes!.forEach((note, noteIndex) => {
               // Skip non-playable notes
-              if (note.note_type === 'Clef' || note.note_type === 'Time') {
+              if (isNonPlayableNote(note)) {
                 return;
               }
 
@@ -823,7 +828,7 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
             const staffMaxDuration = Math.max(
               ...staff.voices.map(voice =>
                 voice.base.notes.reduce((sum, note) => {
-                  if (note.note_type === 'Clef' || note.note_type === 'Time') return sum;
+                  if (isNonPlayableNote(note)) return sum;
                   return sum + getDurationInSeconds(note.duration, note.dots);
                 }, 0)
               )
@@ -832,7 +837,7 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
           } else if (staff.notes) {
             // For single-note staves
             const staffDuration = staff.notes.reduce((sum, note) => {
-              if (note.note_type === 'Clef' || note.note_type === 'Time') return sum;
+              if (isNonPlayableNote(note)) return sum;
               return sum + getDurationInSeconds(note.duration, note.dots);
             }, 0);
             maxDuration = Math.max(maxDuration, staffDuration);
@@ -853,11 +858,11 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
               if (staff.voices && staff.voices.length > 0) {
                 const firstVoice = staff.voices[0];
                 firstRealNoteIndex = firstVoice.base.notes.findIndex(
-                  note => note.note_type !== 'Clef' && note.note_type !== 'Time'
+                  note => note.note_type !== 'Clef' && note.note_type !== 'Time' && note.note_type !== 'Key'
                 );
               } else if (staff.notes && staff.notes.length > 0) {
                 firstRealNoteIndex = staff.notes.findIndex(
-                  note => note.note_type !== 'Clef' && note.note_type !== 'Time'
+                  note => note.note_type !== 'Clef' && note.note_type !== 'Time' && note.note_type !== 'Key'
                 );
               }
               
@@ -922,12 +927,12 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
             // For voices, find first real note in first voice
             const firstVoice = staff.voices[0];
             firstRealNoteIndex = firstVoice.base.notes.findIndex(
-              note => note.note_type !== 'Clef' && note.note_type !== 'Time'
+              note => !isNonPlayableNote(note)
             );
           } else if (staff.notes && staff.notes.length > 0) {
             // For regular notes
             firstRealNoteIndex = staff.notes.findIndex(
-              note => note.note_type !== 'Clef' && note.note_type !== 'Time'
+              note => !isNonPlayableNote(note)
             );
           }
           

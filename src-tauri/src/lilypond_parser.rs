@@ -1,6 +1,7 @@
 use pest::Parser;
 use pest_derive::Parser;
 use serde::{Serialize, Deserialize};
+use tauri::utils::config::parse;
 use std::{collections::HashMap};
 
 #[derive(Parser)]
@@ -13,7 +14,9 @@ pub enum NoteType {
     Clef,
     Chord,
     Time,
-    Rest
+    Key,
+    Rest,
+    Ottava
 }
 
 impl Default for NoteType {
@@ -31,6 +34,7 @@ pub struct LilyPondNote {
     pub chord_notes: Vec<(String, i32)>,  // Additional notes in chord: (pitch, octave)
     pub clef: Option<String>,  // Clef at this note position (if changed)
     pub time_sig: Option<String>,  // Time signature (e.g., "4/4", "3/4")
+    pub key_sig: Option<String>,  // Key signature (e.g., "C", "G", "F")
     pub ottava: Option<i32>,  // Octave transposition (e.g., 1 for up one octave, -1 for down one octave)
     pub arpeggio: bool,  // True if this note has an arpeggio marking
     #[serde(default)]
@@ -39,6 +43,8 @@ pub struct LilyPondNote {
     pub group_start: bool,  // True if this note starts a slur group (note before opening parenthesis)
     #[serde(default)]
     pub group_end: bool,  // True if this note ends a slur group (last note before closing parenthesis)
+    #[serde(default)]
+    pub has_slur: bool,  // True if this note has a ~ marker (for slur to next note)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +78,7 @@ pub struct MusicContainerBase {
     pub name: Option<String>,
     pub clef: Option<String>,
     pub time_signature: Option<String>,
+    pub key_signature: Option<String>,
     pub notes: Vec<LilyPondNote>,
 }
 
@@ -101,6 +108,7 @@ impl Staff {
                 name,
                 clef: None,
                 time_signature: None,
+                key_signature: None,
                 notes: Vec::new(),
             },
             voices: Vec::new(),
@@ -509,6 +517,7 @@ fn parse_variable_definition(pair: pest::iterators::Pair<Rule>, parsed: &mut Par
     let mut var_notes = Vec::new();
     let mut var_clef: Option<String> = None;
     let mut var_time: Option<String> = None;
+    let mut var_key: Option<String> = None;
     let mut var_lyric: Option<Lyric> = None;
     
     for inner_pair in pair.into_inner() {
@@ -548,6 +557,14 @@ fn parse_variable_definition(pair: pest::iterators::Pair<Rule>, parsed: &mut Par
             break;
         }
     }
+
+    for note in &var_notes {
+        if note.note_type == NoteType::Key {
+            var_key = note.key_sig.clone();
+            break;
+        }
+    }
+    
     
     // Store the variable with its notes
     if !var_name.is_empty() {
@@ -557,6 +574,7 @@ fn parse_variable_definition(pair: pest::iterators::Pair<Rule>, parsed: &mut Par
                 notes: var_notes.clone(),
                 clef: var_clef.clone(),
                 time_signature: var_time.clone(),
+                key_signature: var_key.clone(),
             },
             lyric: var_lyric.clone(),
         };
@@ -591,7 +609,10 @@ fn parse_staff_directive(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedM
                     }
                 }
             },
-            Rule::key_signature => parse_key_signature(inner_pair, parsed)?,
+            Rule::key_signature => {
+                parse_key_signature(inner_pair, parsed)?;
+                base.key_signature = parsed.key_signature.clone();
+            },
             Rule::time_signature => parse_time_signature(inner_pair, parsed)?,
             Rule::tempo => parse_tempo(inner_pair, parsed)?,
             _ => {}
@@ -614,6 +635,7 @@ fn parse_key_signature(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedMus
     
     // Convert LilyPond format to VexFlow format
     let vexflow_key = convert_key_signature(&note, &mode);
+    println!("[parse_key_signature] Key signature: {:?}", vexflow_key);
     parsed.key_signature = Some(vexflow_key);
     Ok(())
 }
@@ -718,7 +740,6 @@ fn parse_new_lyrics(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedMusic)
     }
     
     if let Some(lyric) = lyric {
-        println!("DEBUG: lyric={:?}, lyricsto_target={:?}", lyric, lyricsto_target);
         if let Some(target) = lyricsto_target {
             if let Some(&(staff_idx, voice_idx)) = parsed.voices.get(&target) {
                 if let Some(staff) = parsed.staves.get_mut(staff_idx) {
@@ -856,6 +877,9 @@ fn parse_music_sequence(pair: pest::iterators::Pair<Rule>,
                             // Handle \new Voice = "name" { ... } or \new Voice = "name" \variableName
                             parse_new_voice(item, notes, parsed, last_duration, last_octave, mode)?;
                         },
+                        Rule::new_lyrics => {
+                            parse_new_lyrics(item, parsed)?;
+                        },
                         _ => {
                             println!("[parse_music_sequence] 跳过 music_item 内部规则: {:?}", item.as_rule());
                         }
@@ -891,8 +915,6 @@ fn parse_music_mode(pair: pest::iterators::Pair<Rule>,
     let mut last_duration = "4".to_string();
     let mode_type = pair.as_rule();
     
-    println!("[parse_music_mode] ========== 开始 ==========");
-    println!("[parse_music_mode] 输入内容: {}, 模式类型: {:?}", input_str,mode_type);
 
     // Determine the actual mode type and get the pair to process
     let (actual_mode_type, actual_pair) = if mode_type == Rule::music_mode {
@@ -914,7 +936,6 @@ fn parse_music_mode(pair: pest::iterators::Pair<Rule>,
         (mode_type, pair)
     };
     
-    println!("[parse_music_mode] 实际处理的模式类型: {:?}", actual_mode_type);
     
     match actual_mode_type {
         Rule::fixed_mode => {
@@ -990,8 +1011,6 @@ fn parse_music_mode(pair: pest::iterators::Pair<Rule>,
         }
     }
     
-    println!("[parse_music_mode] 输出时 notes 数量: {}", notes.len());
-    println!("[parse_music_mode] ========== 结束 ==========\n");
     
     Ok(())
 }
@@ -1035,11 +1054,13 @@ fn parse_basic_music_item(pair: pest::iterators::Pair<Rule>,
                         chord_notes: Vec::new(),
                         clef: Some(clef_value.clone()),
                         time_sig: None,
+                        key_sig: None,
                         ottava: None,
                         arpeggio: false,
                         note_type: NoteType::Clef,
                         group_start: false,
                         group_end: false,
+                        has_slur: false,
                     };
                     notes.push(clef_note);
                     
@@ -1067,15 +1088,37 @@ fn parse_basic_music_item(pair: pest::iterators::Pair<Rule>,
                         chord_notes: Vec::new(),
                         clef: None,
                         time_sig: Some(time_sig_value.clone()),
+                        key_sig: None,
                         ottava: None,
                         arpeggio: false,
                         note_type: NoteType::Time,
                         group_start: false,
                         group_end: false,
+                        has_slur: false,
                     };
                     notes.push(time_note);
                     println!("[parse_basic_music_item] Created time signature note: {}", time_sig_value);
                 }
+            },
+            Rule::key_signature => {
+                parse_key_signature(inner_pair, parsed)?;
+                let key_note = LilyPondNote {
+                        pitch: String::new(),
+                        duration: String::new(),
+                        octave: 0,
+                        dots: String::new(),
+                        chord_notes: Vec::new(),
+                        clef: None,
+                        time_sig: None,
+                        key_sig: parsed.key_signature.clone(),
+                        ottava: None,
+                        arpeggio: false,
+                        note_type: NoteType::Key,
+                        group_start: false,
+                        group_end: false,
+                        has_slur: false,
+                    };
+                    notes.push(key_note);
             },
             Rule::ottava => {
                 // Handle ottava (octave transposition)
@@ -1102,18 +1145,28 @@ fn parse_basic_music_item(pair: pest::iterators::Pair<Rule>,
                         chord_notes: Vec::new(),
                         clef: None,
                         time_sig: None,
+                        key_sig: None,
                         ottava: Some(ottava_val),
                         arpeggio: false,
-                        note_type: NoteType::Default,
+                        note_type: NoteType::Ottava,
                         group_start: false,
                         group_end: false,
+                        has_slur: false,
                     };
                     notes.push(ottava_note);
                     println!("[parse_basic_music_item] Created ottava note with value: {}", ottava_val);
                 }
             },
             Rule::musical_note => {
-                let note = parse_musical_note(inner_pair, last_duration, last_octave, mode)?;
+                let mut note = parse_musical_note(inner_pair, last_duration, last_octave, mode)?;
+                
+                // If the previous note has has_slur=true (from ~), mark this note as group_end
+                // Only check has_slur to avoid conflicts with parentheses slurs
+                let should_end_group = notes.last().map_or(false, |n| n.has_slur);
+                if should_end_group {
+                    note.group_end = true;
+                }
+                
                 notes.push(note);
             },
             Rule::rest => {
@@ -1125,12 +1178,12 @@ fn parse_basic_music_item(pair: pest::iterators::Pair<Rule>,
                 notes.push(chord);
             },
             Rule::parentheses => {
-                println!("[parse_basic_music_item] 找到括号: {}", inner_pair.as_str());
+                // println!("[parse_basic_music_item] 找到括号: {}", inner_pair.as_str());
                 
                 // Mark the previous note as group_start (the note before the opening parenthesis)
                 if let Some(last_note) = notes.last_mut() {
                     last_note.group_start = true;
-                    println!("[parse_basic_music_item] 设置 group_start 为 true: pitch={}", last_note.pitch);
+                    // println!("[parse_basic_music_item] 设置 group_start 为 true: pitch={}", last_note.pitch);
                 }
                 
                 // Parse notes inside parentheses
@@ -1141,7 +1194,7 @@ fn parse_basic_music_item(pair: pest::iterators::Pair<Rule>,
                 if notes.len() > notes_before_paren {
                     if let Some(last_note_in_paren) = notes.last_mut() {
                         last_note_in_paren.group_end = true;
-                        println!("[parse_basic_music_item] 设置 group_end 为 true: pitch={}", last_note_in_paren.pitch);
+                        // println!("[parse_basic_music_item] 设置 group_end 为 true: pitch={}", last_note_in_paren.pitch);
                     }
                 }
             },
@@ -1201,6 +1254,7 @@ fn parse_musical_note(pair: pest::iterators::Pair<Rule>,
     let mut octave_marks = String::new();
     let mut duration = last_duration.clone();
     let mut dots = String::new();
+    let mut has_slur = false;
     
     for inner_pair in pair.into_inner() {
         // println!("[DEBUG] parse_musical_note - Inner rule: {:?}, content: {}", inner_pair.as_rule(), inner_pair.as_str());
@@ -1217,6 +1271,9 @@ fn parse_musical_note(pair: pest::iterators::Pair<Rule>,
                 duration = dur;
                 dots = d;
                 *last_duration = duration.clone();
+            },
+            Rule::slur_marker => {
+                has_slur = true;
             },
             _ => {
                 println!("[DEBUG] parse_musical_note - Unhandled inner rule: {:?}", inner_pair.as_rule());
@@ -1254,11 +1311,13 @@ fn parse_musical_note(pair: pest::iterators::Pair<Rule>,
         chord_notes: Vec::new(),
         clef: None,
         time_sig: None,
+        key_sig: None,
         ottava: None,
         arpeggio: false,
         note_type: NoteType::Default,
-        group_start: false,
+        group_start: has_slur,  // If this note has ~, it starts a slur
         group_end: false,
+        has_slur,  // Mark if this note has ~ marker
     })
 }
 
@@ -1287,11 +1346,13 @@ fn parse_rest(pair: pest::iterators::Pair<Rule>, last_duration: &mut String) -> 
         chord_notes: Vec::new(),
         clef: None,
         time_sig: None,
+        key_sig: None,
         ottava: None,
         arpeggio: false,
         note_type: NoteType::Rest,
         group_start: false,
         group_end: false,
+        has_slur: false,
     })
 }
 
@@ -1363,10 +1424,15 @@ fn parse_chord(pair: pest::iterators::Pair<Rule>,
         let after_bracket = &content[end_bracket+1..];
         if !after_bracket.is_empty() {
             // Try to parse duration
-            if let Ok((dur, dots_str)) = parse_duration_string(after_bracket) {
-                duration = dur;
-                dots = dots_str;
-                *last_duration = duration.clone();
+            match parse_duration_string(after_bracket) {
+                Ok((dur, dots_str)) => {
+                    duration = dur;
+                    dots = dots_str;
+                    *last_duration = duration.clone();
+                },
+                Err(_) => {
+                    // No explicit duration found, keep using last_duration
+                }
             }
         }
     }
@@ -1427,11 +1493,13 @@ fn parse_note_string_with_mode(
         chord_notes: Vec::new(),
         clef: None,
         time_sig: None,
+        key_sig: None,
         ottava: None,
         arpeggio: false,
         note_type: NoteType::Default,
         group_start: false,
         group_end: false,
+        has_slur: false,
     })
 }
 
@@ -1440,16 +1508,22 @@ fn parse_duration_string(dur_str: &str) -> Result<(String, String), String> {
     let mut duration_num = String::new();
     let mut dots = String::new();
     
+    // Only parse duration and dots, stop at first non-numeric/non-dot character
     for ch in dur_str.chars() {
         if ch.is_numeric() {
             duration_num.push(ch);
         } else if ch == '.' {
             dots.push(ch);
+        } else {
+            // Stop parsing when we encounter a non-duration character (like space or '<')
+            break;
         }
     }
     
+    // If no duration found, return empty to indicate no explicit duration
+    // The caller should use last_duration in this case
     if duration_num.is_empty() {
-        duration_num = "4".to_string();
+        return Err("No duration found".to_string());
     }
     
     Ok((duration_num, dots))
@@ -1724,6 +1798,7 @@ fn parse_new_voice(pair: pest::iterators::Pair<Rule>,
             name: None,
             clef: None,
             time_signature: None,
+            key_signature: None,
             notes: Vec::new(),
         },
         lyrics: Vec::new(),
@@ -1776,11 +1851,18 @@ fn parse_new_voice(pair: pest::iterators::Pair<Rule>,
             break;
         }
     }
-    
+    for note in &voice.base.notes {
+        if note.note_type == NoteType::Key {
+            voice.base.key_signature = note.key_sig.clone();
+            break;
+        }
+    }
+
     let staff_idx = parsed.staves.len() - 1;
     if let Some(last_staff) = parsed.staves.last_mut() {
         last_staff.base.clef = voice.base.clef.clone();
         last_staff.base.time_signature = voice.base.time_signature.clone();
+        last_staff.base.key_signature = voice.base.key_signature.clone();
         last_staff.voices.push(voice);
         let voice_idx = last_staff.voices.len() - 1;
         // Insert voice index mapping only if it has a name

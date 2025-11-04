@@ -33,6 +33,9 @@ async fn parse_lilypond_file(file_path: String) -> Result<ParsedMusic, String>
 - 调号 (`\key c \major`)
 - 拍号 (`\time 4/4`)
 - 标题信息 (title, composer)
+- 圆滑音标记 (`~` 符号，例如 `c'4~ d'4` 表示两音符用slur连接)
+  - 括号形式 (`(c'4 d'4)` 也支持slur)
+  - 连续slur (`c'4~ d'4~ e'4` 会形成连续的圆滑音线)
 
 ### 2. 音乐记谱显示
 ```typescript

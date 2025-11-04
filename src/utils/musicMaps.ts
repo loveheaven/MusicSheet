@@ -10,7 +10,7 @@
 /**
  * Note type classification
  */
-export type NoteType = 'Default' | 'Clef' | 'Chord' | 'Time';
+export type NoteType = 'Default' | 'Clef' | 'Chord' | 'Time' | 'Key' | 'Ottava' | 'Rest';
 
 /**
  * LilyPond note representation
@@ -24,6 +24,7 @@ export interface LilyPondNote {
   chord_notes?: Array<[string, number]>;
   clef?: string;
   time_sig?: string;  // Time signature (e.g., "4/4", "3/4")
+  key_sig?: string;  // Key signature (e.g., "C", "D")
   ottava?: number;  // Octave transposition
   arpeggio?: boolean;  // True if this note has an arpeggio marking
   note_type?: NoteType;  // Type of note: Default, Clef, Chord, Time
