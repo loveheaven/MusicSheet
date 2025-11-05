@@ -554,8 +554,13 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
 
             let currentTime = 0;
             voice.base.notes.forEach((note) => {
-              // Skip non-playable notes
-              if (isNonPlayableNote(note)|| note.pitch === 'r') {
+              // Skip non-playable metadata notes (Clef, Time, Key, etc.)
+              if (isNonPlayableNote(note)) {
+                return;
+              }
+              
+              // Handle rest - advance time but don't add note
+              if (note.pitch === 'r') {
                 const duration = durationToSeconds(note.duration, note.dots);
                 currentTime += duration;
                 return;
@@ -608,8 +613,13 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
 
           let currentTime = 0;
           staff.notes!.forEach((note) => {
-            // Skip non-playable notes
-            if (isNonPlayableNote(note) || note.pitch === 'r') {
+            // Skip non-playable metadata notes (Clef, Time, Key, etc.)
+            if (isNonPlayableNote(note)) {
+              return;
+            }
+            
+            // Handle rest - advance time but don't add note
+            if (note.pitch === 'r') {
               const duration = durationToSeconds(note.duration, note.dots);
               currentTime += duration;
               return;
@@ -749,13 +759,16 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
             staff.voices!.forEach((voice, voiceIdx) => {
               let transportTime = 0;
               voice.base.notes.forEach((note, noteIdx) => {
-                // Skip non-playable notes
+                const noteDuration = getDurationInSeconds(note.duration, note.dots);
+                
+                // Skip non-playable notes (but still update time for UI sync)
                 if (isNonPlayableNote(note)) {
+                  // Don't play or highlight, but time still advances
+                  // (This keeps UI in sync even with metadata notes)
                   return;
                 }
 
                 const toneNote = convertLilyPondToTone(note);
-                const noteDuration = getDurationInSeconds(note.duration, note.dots);
 
                 // Schedule note playback
                 if (toneNote !== null) {
@@ -788,13 +801,15 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
             // Play notes from staff.notes (backward compatibility)
             let transportTime = 0;
             staff.notes!.forEach((note, noteIndex) => {
-              // Skip non-playable notes
+              const noteDuration = getDurationInSeconds(note.duration, note.dots);
+              
+              // Skip non-playable notes (but still update time for UI sync)
               if (isNonPlayableNote(note)) {
+                // Don't play or highlight, but time still advances
                 return;
               }
 
               const toneNote = convertLilyPondToTone(note);
-              const noteDuration = getDurationInSeconds(note.duration, note.dots);
 
               // Schedule note playback
               if (toneNote !== null) {
