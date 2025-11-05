@@ -142,3 +142,75 @@ export const vexFlowDurationMap: { [key: string]: string } = {
   '16': '16', // sixteenth note
   '32': '32'  // thirty-second note
 };
+
+/**
+ * Determine if an accidental should be shown for a note given the key signature
+ * @param pitch - LilyPond pitch (e.g., 'bes', 'fis', 'c', 'b')
+ * @param keySignature - Key signature string (e.g., 'F', 'G', 'Bb', 'D')
+ * @returns '#' for sharp, 'b' for flat, 'n' for natural, null for no accidental needed
+ */
+export const shouldShowAccidental = (pitch: string, keySignature: string): string | null => {
+  // Get the base note (first character)
+  const baseNote = pitch.charAt(0).toLowerCase();
+  
+  // Determine if the note has a sharp or flat in LilyPond notation
+  const hasSharp = pitch.includes('is');
+  const hasFlat = pitch.includes('es');
+  
+  // Key signature alterations
+  // Maps key signature to which notes are altered
+  const keySignatureAlterations: { [key: string]: { [note: string]: string } } = {
+    // Major keys with sharps
+    'G': { 'f': '#' },
+    'D': { 'f': '#', 'c': '#' },
+    'A': { 'f': '#', 'c': '#', 'g': '#' },
+    'E': { 'f': '#', 'c': '#', 'g': '#', 'd': '#' },
+    'B': { 'f': '#', 'c': '#', 'g': '#', 'd': '#', 'a': '#' },
+    'F#': { 'f': '#', 'c': '#', 'g': '#', 'd': '#', 'a': '#', 'e': '#' },
+    'C#': { 'f': '#', 'c': '#', 'g': '#', 'd': '#', 'a': '#', 'e': '#', 'b': '#' },
+    
+    // Major keys with flats
+    'F': { 'b': 'b' },
+    'Bb': { 'b': 'b', 'e': 'b' },
+    'Eb': { 'b': 'b', 'e': 'b', 'a': 'b' },
+    'Ab': { 'b': 'b', 'e': 'b', 'a': 'b', 'd': 'b' },
+    'Db': { 'b': 'b', 'e': 'b', 'a': 'b', 'd': 'b', 'g': 'b' },
+    'Gb': { 'b': 'b', 'e': 'b', 'a': 'b', 'd': 'b', 'g': 'b', 'c': 'b' },
+    'Cb': { 'b': 'b', 'e': 'b', 'a': 'b', 'd': 'b', 'g': 'b', 'c': 'b', 'f': 'b' },
+    
+    // C major (no alterations)
+    'C': {}
+  };
+  
+  const alterations = keySignatureAlterations[keySignature] || {};
+  const keyAlteration = alterations[baseNote];
+  
+  // If the note has a sharp in LilyPond
+  if (hasSharp) {
+    // If key signature already has this note as sharp, don't show accidental
+    if (keyAlteration === '#') {
+      return null;
+    }
+    // Otherwise, show sharp
+    return '#';
+  }
+  
+  // If the note has a flat in LilyPond
+  if (hasFlat) {
+    // If key signature already has this note as flat, don't show accidental
+    if (keyAlteration === 'b') {
+      return null;
+    }
+    // Otherwise, show flat
+    return 'b';
+  }
+  
+  // Note is natural in LilyPond notation
+  // If key signature has an alteration for this note, show natural sign
+  if (keyAlteration) {
+    return 'n';
+  }
+  
+  // No accidental needed
+  return null;
+};

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Renderer, Stave, StaveNote, Voice, Formatter, Accidental, Flow, StaveConnector, Beam, Dot, Curve, TextBracket } from 'vexflow';
-import { durationMap, pitchMap, jianpuMap, vexFlowDurationMap } from '../utils/musicMaps';
+import { durationMap, pitchMap, jianpuMap, vexFlowDurationMap, shouldShowAccidental } from '../utils/musicMaps';
 import type { LilyPondNote, Lyric, VoiceData, Staff, ParsedMusic } from '../utils/musicMaps';
 
 interface MusicNotationProps {
@@ -473,13 +473,15 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
    * @param clef - Clef to use for this note
    * @param noteIndex - Index of the note (for highlighting)
    * @param staffIndex - Index of the staff (for highlighting)
+   * @param keySignature - Current key signature (e.g., 'F', 'G', 'C')
    * @returns VexFlow StaveNote or marker object
    */
   const createVexFlowNote = (
     note: LilyPondNote,
     clef: string,
     noteIndex: number,
-    staffIndex: number
+    staffIndex: number,
+    keySignature: string = 'C'
   ): any => {
     // Check if this is a clef marker
     if (note.note_type === 'Clef' && note.clef) {
@@ -524,34 +526,16 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     const noteClef = note.clef;
     
     if (note.note_type === 'Chord' && note.chord_notes && note.chord_notes.length > 0) {
-      // Create a chord
-      let duration = durationMap[note.duration] || 'q';
-      const hasDots = note.dots && note.dots.length > 0;
-      if (hasDots) {
-        duration += 'd'.repeat(note.dots.length);
-      }
-      
       // Build keys array for all notes in the chord
-      const keys: string[] = [];
+      const keys = [
+        `${convertPitch(note.pitch)}/${note.octave}`,
+        ...note.chord_notes.map(([pitch, octave]) => `${convertPitch(pitch)}/${octave}`)
+      ];
       
-      // Add the base note
-      let basePitch = note.pitch;
-      if (basePitch.includes('is')) {
-        basePitch = basePitch.replace('is', '#');
-      } else if (basePitch.includes('es')) {
-        basePitch = basePitch.replace('es', 'b');
-      }
-      keys.push(`${basePitch}/${note.octave}`);
-      
-      // Add chord notes
-      for (const [chordPitch, chordOctave] of note.chord_notes) {
-        let pitch = chordPitch;
-        if (pitch.includes('is')) {
-          pitch = pitch.replace('is', '#');
-        } else if (pitch.includes('es')) {
-          pitch = pitch.replace('es', 'b');
-        }
-        keys.push(`${pitch}/${chordOctave}`);
+      // Create chord with duration
+      let duration = durationMap[note.duration] || 'q';
+      if (note.dots && note.dots.length > 0) {
+        duration += 'd'.repeat(note.dots.length);
       }
       
       staveNote = new StaveNote({
@@ -561,22 +545,14 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
         auto_stem: true
       });
       
-      // Add dots explicitly for visual display
-      if (hasDots) {
-        const numDots = note.dots.length;
-        for (let noteIndex = 0; noteIndex < keys.length; noteIndex++) {
-          for (let dotIndex = 0; dotIndex < numDots; dotIndex++) {
-            staveNote.addModifier(new Dot(), noteIndex);
-          }
-        }
-      }
+      // Add dots
+      addDotsToNote(staveNote, note.dots, keys.length);
       
-      // Add accidentals for the base note if needed
-      if (note.pitch.includes('is')) {
-        staveNote.addModifier(new Accidental('#'), 0);
-      } else if (note.pitch.length > 1 && note.pitch.includes('es')) {
-        staveNote.addModifier(new Accidental('b'), 0);
-      }
+      // Add accidentals for all notes in the chord
+      addAccidentalIfNeeded(staveNote, note.pitch, keySignature, 0);
+      note.chord_notes.forEach(([chordPitch, _chordOctave], i) => {
+        addAccidentalIfNeeded(staveNote, chordPitch, keySignature, i + 1);
+      });
 
       // Add arpeggio marking if present
       if (note.arpeggio) {
@@ -590,21 +566,17 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
       if (parts[0] === 'r') {
         // Create a rest
         let duration = parts[1];
-        const hasDots = note.dots && note.dots.length > 0;
-        if (hasDots) {
+        if (note.dots && note.dots.length > 0) {
           duration += 'd'.repeat(note.dots.length);
         }
         
         // Choose rest position based on clef
-        // For bass clef, use D3; for treble clef, use B4
-        let restKey = 'b/4'; // Default for treble clef
-        if (clef === 'bass') {
-          restKey = 'd/3';
-        } else if (clef === 'alto') {
-          restKey = 'c/4';
-        } else if (clef === 'tenor') {
-          restKey = 'a/3';
-        }
+        const restKeys: { [key: string]: string } = {
+          'bass': 'd/3',
+          'alto': 'c/4',
+          'tenor': 'a/3'
+        };
+        const restKey = restKeys[clef] || 'b/4'; // Default for treble clef
         
         staveNote = new StaveNote({
           clef: clef,
@@ -612,20 +584,16 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
           duration: duration,
           type: 'r'
         });
-        // Add dots explicitly for visual display
-        if (hasDots) {
-          for (let i = 0; i < note.dots.length; i++) {
-            staveNote.addModifier(new Dot(), 0);
-          }
-        }
+        
+        addDotsToNote(staveNote, note.dots);
       } else {
         // Create a regular note
         const [pitch, octave, baseDuration] = parts;
         let duration = baseDuration;
-        const hasDots = note.dots && note.dots.length > 0;
-        if (hasDots) {
+        if (note.dots && note.dots.length > 0) {
           duration += 'd'.repeat(note.dots.length);
         }
+        
         staveNote = new StaveNote({
           clef: clef,
           keys: [`${pitch}/${octave}`],
@@ -633,18 +601,9 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
           auto_stem: true
         });
 
-        // Add dots explicitly for visual display
-        if (hasDots) {
-          for (let i = 0; i < note.dots.length; i++) {
-            staveNote.addModifier(new Dot(), 0);
-          }
-        }
-
-        if (pitch.includes('#')) {
-          staveNote.addModifier(new Accidental('#'), 0);
-        } else if (pitch.length > 1 && pitch.includes('b')) {
-          staveNote.addModifier(new Accidental('b'), 0);
-        }
+        // Add dots and accidentals
+        addDotsToNote(staveNote, note.dots);
+        addAccidentalIfNeeded(staveNote, note.pitch, keySignature, 0);
       }
     }
 
@@ -691,8 +650,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
       beam.setContext(context).draw();
     });
     
-    // Draw slurs using common function
-    drawSlursForNotes(context, measureNotes);
+    
 
     // Draw arpeggios
     for (let i = 0; i < measureNotes.length; i++) {
@@ -701,6 +659,9 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
         drawArpeggio(note, context);
       }
     }
+
+    // Draw slurs using common function
+    drawSlursForNotes(context, measureNotes);
   };
 
   /**
@@ -1097,6 +1058,56 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     return 0;                 // All other durations: no line below
   };
 
+  /**
+   * Convert LilyPond pitch to VexFlow pitch format
+   * @param pitch - LilyPond pitch (e.g., 'cis', 'bes', 'f')
+   * @returns VexFlow pitch format (e.g., 'c#', 'bb', 'f')
+   */
+  const convertPitch = (pitch: string): string => {
+    let result = pitch;
+    if (result.includes('is')) {
+      result = result.replace('is', '#');
+    } else if (result.includes('es')) {
+      result = result.replace('es', 'b');
+    }
+    return result;
+  };
+
+  /**
+   * Add dots to a note for visual display
+   * @param staveNote - VexFlow StaveNote object
+   * @param dots - Dots string from LilyPondNote
+   * @param numNotes - Number of notes in the chord (1 for single note)
+   */
+  const addDotsToNote = (staveNote: any, dots: string, numNotes: number = 1): void => {
+    if (dots && dots.length > 0) {
+      const numDots = dots.length;
+      for (let noteIndex = 0; noteIndex < numNotes; noteIndex++) {
+        for (let dotIndex = 0; dotIndex < numDots; dotIndex++) {
+          staveNote.addModifier(new Dot(), noteIndex);
+        }
+      }
+    }
+  };
+
+  /**
+   * Add accidental modifier to a note if needed based on key signature
+   * @param staveNote - VexFlow StaveNote object
+   * @param pitch - LilyPond pitch (e.g., 'bes', 'fis', 'c', 'b')
+   * @param keySignature - Key signature string (e.g., 'F', 'G', 'Bb', 'D')
+   * @param noteIndex - Index of the note in the chord (0 for single note or chord base)
+   */
+  const addAccidentalIfNeeded = (staveNote: any, pitch: string, keySignature: string, noteIndex: number): void => {
+    const needsAccidental = shouldShowAccidental(pitch, keySignature);
+    if (needsAccidental === '#') {
+      staveNote.addModifier(new Accidental('#'), noteIndex);
+    } else if (needsAccidental === 'b') {
+      staveNote.addModifier(new Accidental('b'), noteIndex);
+    } else if (needsAccidental === 'n') {
+      staveNote.addModifier(new Accidental('n'), noteIndex);
+    }
+  };
+
   const convertLilyPondToVexFlow = (note: LilyPondNote): string => {
     // Handle rest
     if (note.pitch === 'r') {
@@ -1188,10 +1199,11 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     });
 
     // Convert notes for each staff and voice, tracking clef changes
+    const keySignature = musicData.key_signature || 'C';
     const staffVexNotes = staffVoicesData.map((staffData, staffIdx) => 
       staffData.voices.map((voiceData, voiceIdx) =>
         voiceData.notes.map((note, noteIdx) => 
-          createVexFlowNote(note, staves[staffIdx].clef || 'treble', noteIdx, staffIdx)
+          createVexFlowNote(note, staves[staffIdx].clef || 'treble', noteIdx, staffIdx, keySignature)
         )
       )
     );
@@ -1431,31 +1443,8 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
             const allVoices = voicesToRender.map(v => v.voice);
             formatter.joinVoices(allVoices).format(allVoices, formatWidth);
             
-            // Create beams first (before drawing)
-            const allBeams: Beam[] = [];
-            voicesToRender.forEach(({ measureNotes }) => {
-              const beams = createBeamsForNotes(measureNotes);
-              allBeams.push(...beams);
-            });
-            
-            // Draw all voices
-            voicesToRender.forEach(({ voice }) => {
-              voice.draw(context, measureStave);
-            });
-            
-            // Draw beams after voices
-            allBeams.forEach((beam) => {
-              beam.setContext(context).draw();
-            });
-            
-            // Draw arpeggios
-            voicesToRender.forEach(({ measureNotes }) => {
-              for (let i = 0; i < measureNotes.length; i++) {
-                const note = measureNotes[i];
-                if ((note as any)._arpeggio) {
-                  drawArpeggio(note, context);
-                }
-              }
+            voicesToRender.forEach(({ voice, measureNotes }) => {
+-              drawVoiceWithDecorations(context, voice, measureStave, measureNotes);
             });
           }
         }
