@@ -31,6 +31,10 @@ function App() {
     const saved = localStorage.getItem('showJianpu');
     return saved ? JSON.parse(saved) : false;
   });
+  const [tempo, setTempo] = useState(() => {
+    const saved = localStorage.getItem('tempo');
+    return saved ? parseFloat(saved) : 1.0;
+  });
   const audioPlayerRef = useRef<any>(null);
   const exportButtonRef = useRef<HTMLDivElement>(null);
 
@@ -253,6 +257,11 @@ function App() {
     localStorage.setItem('showJianpu', JSON.stringify(showJianpu));
   }, [showJianpu]);
 
+  // Save tempo to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('tempo', tempo.toString());
+  }, [tempo]);
+
   useEffect(() => {
     loadSampleMusic();
   }, []);
@@ -374,6 +383,21 @@ function App() {
                 )}
               </div>
               <div className="controls-right">
+                <div className="tempo-control">
+                  <label htmlFor="tempoControl">速度:</label>
+                  <input
+                    id="tempoControl"
+                    type="range"
+                    min="0.5"
+                    max="2.0"
+                    step="0.1"
+                    value={tempo}
+                    onChange={(e) => setTempo(parseFloat(e.target.value))}
+                    disabled={isPlaying || isExporting}
+                    className="tempo-slider"
+                  />
+                  <span className="tempo-value">{tempo.toFixed(1)}x</span>
+                </div>
                 <button 
                   onClick={handlePlay} 
                   disabled={isPlaying || isExporting}
@@ -466,6 +490,7 @@ function App() {
               selectedInstrument={selectedInstrument}
               staffInstruments={staffInstruments}
               staffVolumes={staffVolumes}
+              tempo={tempo}
             />
           </>
         ) : (

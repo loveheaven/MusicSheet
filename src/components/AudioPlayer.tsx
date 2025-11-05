@@ -137,9 +137,10 @@ interface AudioPlayerProps {
   selectedInstrument?: string;
   staffInstruments?: Map<number, string>;
   staffVolumes?: Map<number, boolean>;
+  tempo?: number;
 }
 
-const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress, onPlaybackEnd, selectedInstrument = 'piano', staffInstruments = new Map(), staffVolumes = new Map() }, ref) => {
+const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress, onPlaybackEnd, selectedInstrument = 'piano', staffInstruments = new Map(), staffVolumes = new Map(), tempo = 1.0 }, ref) => {
   const synthsRef = useRef<Map<number, Tone.Sampler | Tone.Synth>>(new Map());
   const isPlayingRef = useRef(false);
   const scheduledEventsRef = useRef<number[]>([]);
@@ -236,7 +237,8 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
       baseDuration *= multiplier;
     }
     
-    return baseDuration;
+    // Apply tempo: divide by tempo (e.g., 2x tempo = half duration)
+    return baseDuration / tempo;
   };
 
   const createSynthForStaff = async (staffIndex: number): Promise<Tone.Sampler | Tone.Synth> => {

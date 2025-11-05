@@ -5,7 +5,11 @@
   composer = "Test"
   tagline = ""
 }
-
+love = \fixed d' {
+    \clef treble
+    c4 d e f g
+    
+  }
 \score {
   \new Staff {
     \clef treble
@@ -21,6 +25,7 @@
     a' b' c'' d'' |
     \ottava #0
     e'' f'' g'' a'' |
+    \love
   }
   \layout { }
   \midi { 

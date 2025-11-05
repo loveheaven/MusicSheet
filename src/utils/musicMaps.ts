@@ -104,6 +104,7 @@ export const pitchMap: { [key: string]: string } = {
 /**
  * Duration mapping for audio playback (in seconds)
  * Maps LilyPond duration values to time in seconds
+ * tempo is 120 bpm
  */
 export const durationToSecondsMap: { [key: string]: number } = {
   '1': 2.0,     // Whole note

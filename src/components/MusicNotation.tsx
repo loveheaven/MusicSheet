@@ -195,9 +195,9 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     // Note: Check from index 1 onwards to avoid confusing 'b' pitch with 'b' flat
     const accidental = pitchStr.substring(1);
     if (accidental.includes('#')) {
-      jianpu += '#'; // Sharp
+      jianpu = '♯' + jianpu; // Sharp
     } else if (accidental.includes('b')) {
-      jianpu += 'b'; // Flat
+      jianpu = '♭' + jianpu; // Flat
     }
 
     // Calculate octave indicators (dots above/below the number)
@@ -594,9 +594,21 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
         if (hasDots) {
           duration += 'd'.repeat(note.dots.length);
         }
+        
+        // Choose rest position based on clef
+        // For bass clef, use D3; for treble clef, use B4
+        let restKey = 'b/4'; // Default for treble clef
+        if (clef === 'bass') {
+          restKey = 'd/3';
+        } else if (clef === 'alto') {
+          restKey = 'c/4';
+        } else if (clef === 'tenor') {
+          restKey = 'a/3';
+        }
+        
         staveNote = new StaveNote({
           clef: clef,
-          keys: ['b/4'],
+          keys: [restKey],
           duration: duration,
           type: 'r'
         });
@@ -1334,7 +1346,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
           );
           rowStaves.push(measureStave);
           bottomMeasure.push(measureStave.getYForLine(4));
-          
+
           // Render notes for this measure - handle multiple voices
           const staffVoices = staffMeasures[staffIndex];
           const voicesToRender: any[] = [];
