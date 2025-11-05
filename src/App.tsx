@@ -289,35 +289,6 @@ function App() {
       <main className="main-content">
         {musicData ? (
           <>
-            <div className="music-info">
-              <div className="info-grid">
-                {musicData.title && (
-                  <div className="info-item">
-                    <label>Title:</label>
-                    <span>{musicData.title}</span>
-                  </div>
-                )}
-                {musicData.composer && (
-                  <div className="info-item">
-                    <label>Composer:</label>
-                    <span>{musicData.composer}</span>
-                  </div>
-                )}
-                {musicData.key_signature && (
-                  <div className="info-item">
-                    <label>Key:</label>
-                    <span>{musicData.key_signature}</span>
-                  </div>
-                )}
-                {musicData.time_signature && (
-                  <div className="info-item">
-                    <label>Time:</label>
-                    <span>{musicData.time_signature}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-
             <div className="controls">
               <div className="controls-left">
                 {musicData?.staves && musicData.staves.length > 0 ? (

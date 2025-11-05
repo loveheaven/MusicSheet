@@ -247,36 +247,61 @@
   box-sizing: border-box;
 }
 
-.music-info {
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(10px);
-  border-radius: 12px;
-  padding: 1.5rem;
+/* Music header styles - now shown at the top of notation */
+.music-header {
   margin-bottom: 2rem;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  box-sizing: border-box;
+  padding: 1.5rem;
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
 }
 
-.info-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 1rem;
+.music-header-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
 }
 
-.info-item {
+.music-title {
+  font-size: 1.8rem;
+  font-weight: 700;
+  margin: 0;
+  color: #1a1a1a;
+  text-align: center;
+  flex: 1;
+}
+
+.music-header-right {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  align-items: flex-end;
+  gap: 0.5rem;
+  min-width: 200px;
 }
 
-.info-item label {
-  font-size: 0.8rem;
-  opacity: 0.8;
+.music-composer {
+  font-size: 1.1rem;
   font-weight: 500;
+  margin: 0;
+  color: #4a5568;
+  text-align: right;
 }
 
-.info-item span {
-  font-size: 1rem;
+.music-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+  color: #4a5568;
+}
+
+.meta-item {
+  display: inline-flex;
+  gap: 0.5rem;
+}
+
+.meta-item strong {
   font-weight: 600;
 }
 

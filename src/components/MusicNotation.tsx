@@ -1794,7 +1794,36 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
   
   return (
     <div className="music-notation">
+      {/* Music Info Header */}
+      {musicData && (
+        <div className="music-header">
+          <div className="music-header-main">
+            {musicData.title && (
+              <h2 className="music-title">{musicData.title}</h2>
+            )}
+            <div className="music-header-right">
+              {musicData.composer && (
+                <p className="music-composer">{musicData.composer}</p>
+              )}
+              <div className="music-meta">
+                {musicData.time_signature && (
+                  <span className="meta-item">
+                    <strong>拍号:</strong> {musicData.time_signature}
+                  </span>
+                )}
+                {musicData.tempo && (
+                  <span className="meta-item">
+                    <strong>速度:</strong> {musicData.tempo}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      
       <div ref={containerRef} className="notation-canvas"></div>
+      
       {displayNotes.length > 0 && (
         <p className="notation-note">
           {staffCount > 0 
