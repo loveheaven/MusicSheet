@@ -90,6 +90,7 @@ export const durationMap: { [key: string]: string } = {
 /**
  * Pitch mapping from LilyPond to VexFlow format
  * Maps LilyPond pitch names to VexFlow pitch names
+ * Supports both English (b) and German (h for B-natural) notation
  */
 export const pitchMap: { [key: string]: string } = {
   'c': 'c',
@@ -98,7 +99,8 @@ export const pitchMap: { [key: string]: string } = {
   'f': 'f',
   'g': 'g',
   'a': 'a',
-  'b': 'b'
+  'b': 'b',
+  'h': 'b'  // German notation: h = B-natural
 };
 
 /**
@@ -118,6 +120,7 @@ export const durationToSecondsMap: { [key: string]: number } = {
 /**
  * Jianpu (simplified notation) mapping
  * Maps LilyPond pitch names to Jianpu numbers (1-7 for do-ti)
+ * Supports both English and German notation
  */
 export const jianpuMap: { [key: string]: string } = {
   'c': '1',  // do
@@ -126,7 +129,8 @@ export const jianpuMap: { [key: string]: string } = {
   'f': '4',  // fa
   'g': '5',  // sol
   'a': '6',  // la
-  'b': '7'   // ti
+  'b': '7',  // ti
+  'h': '7'   // ti (German notation: h = B-natural)
 };
 
 /**
@@ -151,7 +155,14 @@ export const vexFlowDurationMap: { [key: string]: string } = {
  */
 export const shouldShowAccidental = (pitch: string, keySignature: string): string | null => {
   // Get the base note (first character)
-  const baseNote = pitch.charAt(0).toLowerCase();
+  let baseNote = pitch.charAt(0).toLowerCase();
+  
+  // In German notation, 'h' means B-natural, 'b' means B-flat
+  // Convert 'h' to 'b' for consistency in key signature checking
+  const isGermanH = baseNote === 'h';
+  if (isGermanH) {
+    baseNote = 'b';
+  }
   
   // Determine if the note has a sharp or flat in LilyPond notation
   const hasSharp = pitch.includes('is');
@@ -185,6 +196,15 @@ export const shouldShowAccidental = (pitch: string, keySignature: string): strin
   const alterations = keySignatureAlterations[keySignature] || {};
   const keyAlteration = alterations[baseNote];
   
+  // Special case for German 'h' (B-natural)
+  // If the key signature has B-flat, 'h' should show natural sign
+  if (isGermanH && !hasSharp && !hasFlat) {
+    if (keyAlteration === 'b') {
+      return 'n';  // Show natural sign
+    }
+    return null;  // No accidental needed
+  }
+  
   // If the note has a sharp in LilyPond
   if (hasSharp) {
     // If key signature already has this note as sharp, don't show accidental
@@ -192,8 +212,7 @@ export const shouldShowAccidental = (pitch: string, keySignature: string): strin
       return null;
     }
     // Otherwise, show sharp
-    return '#';
-  }
+    return '#';}
   
   // If the note has a flat in LilyPond
   if (hasFlat) {

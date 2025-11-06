@@ -22,17 +22,44 @@ string_literal = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
 
 // Special LilyPond literals
 boolean_literal = @{ "##t" | "##f" }
+// Direction and alignment constants
+direction_constant = @{ "#" ~ ("UP" | "DOWN" | "LEFT" | "RIGHT" | "CENTER" | "up" | "down" | "left" | "right" | "center") }
+// Number literals with # prefix (e.g., #0.2, #-1.9, #1)
+scheme_number = @{ "#" ~ ("-"? ~ digit+ ~ ("." ~ digit+)? | "-"? ~ "." ~ digit+) }
+// Scheme string literal with # prefix (e.g., #"8", #"text")
+scheme_string = @{ "#" ~ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
 markup_null = { "\\markup" ~ "\\null" }
-property_reference = @{ "#'" ~ identifier ~ (":" ~ identifier)* }
+// Scheme quoted expressions: #'identifier, #'(list), #'()
+// Support nested parentheses in quoted lists
+scheme_quote_paren = { "(" ~ scheme_quote_content ~ ")" }
+scheme_quote_content = { (scheme_quote_paren | (!")" ~ ANY))* }
+scheme_quote_list = { "#'" ~ scheme_quote_paren }
+scheme_quote_symbol = @{ "#'" ~ identifier ~ (":" ~ identifier)* }
+property_reference = { scheme_quote_symbol | scheme_quote_list }
 unit_literal = @{ real ~ "\\" ~ identifier }
 
 // Version directive
 version = { "\\version" ~ string_literal }
 
+// Language directive
+language = { "\\language" ~ string_literal }
+
 // Commands and directives
 simple_command = { "\\" ~ identifier }
-scheme_code = { "#(" ~ (!")" ~ ANY)* ~ ")" }
+// Scheme code with support for nested parentheses and #{...#} blocks
+scheme_lily_block = { "#{" ~ (!"#}" ~ ANY)* ~ "#}" }
+scheme_paren = { "(" ~ scheme_content ~ ")" }
+scheme_expr = { "#(" ~ scheme_content ~ ")" }
+scheme_content = { (scheme_expr | scheme_lily_block | scheme_paren | (!")" ~ !"(" ~ ANY))* }
+scheme_code = { scheme_expr }
 include_directive = { "\\include" ~ string_literal }
+
+// Custom event function call
+// Format: \functionName arg1 arg2 ...
+// Arguments can be: string_literal, scheme_number, markup_expression, property_reference, etc.
+// Order matters: put more specific patterns first
+function_argument = { string_literal | scheme_number | markup_expression | property_reference | scheme_code }
+custom_function_call = { "\\" ~ identifier ~ WHITESPACE* ~ function_argument+ }
 
 // Additional LilyPond commands
 pointandclickoff = { "\\pointAndClickOff" }
@@ -50,17 +77,21 @@ modal_transpose = { "\\modalTranspose" ~ modal_transpose_pitch ~ modal_transpose
 // Comments in music (line number markers like "| % 1")
 music_comment = { "|" ~ "%" ~ unsigned }
 
-// Override commands
-override_command = { "\\override" ~ identifier ~ "." ~ identifier ~ "." ~ identifier ~ "=" ~ string_literal }
-set_command = { "\\set" ~ identifier ~ "." ~ identifier ~ "=" ~ string_literal }
+// Override and set commands
+override_value = { scheme_code | scheme_expr | property_reference | direction_constant | scheme_string | scheme_number | string_literal | boolean_literal | int | real | identifier }
+override_command = { "\\override" ~ identifier ~ ("." ~ identifier)+ ~ "=" ~ override_value }
+// Set command supports both "context.property" and "property" formats
+set_command = { "\\set" ~ identifier ~ ("." ~ identifier)? ~ "=" ~ override_value }
+
+// Layout context commands
+consists_command = { "\\consists" ~ (string_literal | ("#" ~ identifier) | identifier) }
+remove_command = { "\\remove" ~ (string_literal | identifier) }
+name_command = { "\\name" ~ identifier }
+alias_command = { "\\alias" ~ identifier }
+accepts_command = { "\\accepts" ~ identifier }
 
 // Merge commands
 merge_command = { "\\mergeDifferentlyDottedOn" | "\\mergeDifferentlyHeadedOn" }
-
-// Parentheses and grouping
-parentheses = { "(" ~ music_sequence ~ ")" }
-// Angle brackets for chords - more flexible to handle any content including duration
-angle_brackets = { "<" ~ (!">" ~ ANY)* ~ ">" ~ duration? }
 
 // Helper for nested braces content
 nested_braces = { "{" ~ (nested_braces | (!"}" ~ ANY))* ~ "}" }
@@ -70,26 +101,39 @@ braced_content = { (nested_braces | (!"}" ~ ANY))* }
 paper_block = { "\\paper" ~ "{" ~ braced_content ~ "}" }
 
 // Markup expressions with nested braces
-markup_expression = { "\\markup" ~ nested_braces }
+markup_expression = { "\\markup" ~ (nested_braces|string_literal) }
 fromproperty = { "\\fromproperty" ~ property_reference }
 fill_line = { "\\fill-line" ~ nested_braces }
 
 // Variable definitions and references
 variable_name = @{ (letter | digit | "_")+ }
 variable_reference = { "\\" ~ variable_name }
-variable_value = { music_mode | lyricmode | variable_reference | string_literal | real | unsigned }
+// Bare music block (just braces without \relative, \fixed, etc.)
+bare_music_block = { "{" ~ basic_music_sequence ~ "}" }
+variable_value = { 
+    override_command | set_command |
+    music_mode | lyricmode | bare_music_block | 
+    custom_function_call | variable_reference | 
+    scheme_code | string_literal | real | unsigned 
+}
 variable_definition = { variable_name ~ "=" ~ variable_value }
 
 // Header block with proper parsing
-header_item = { identifier ~ "=" ~ string_literal }
+// Header values can be: string_literal, boolean_literal, markup_expression, scheme_code, etc.
+header_value = { markup_expression | string_literal | boolean_literal | scheme_code | identifier }
+header_item = { identifier ~ "=" ~ header_value }
 header = { "\\header" ~ "{" ~ header_item* ~ "}" }
 
 // Musical elements - detailed parsing
 
 // Key signature
-key_note = @{ ("c" | "d" | "e" | "f" | "g" | "a" | "b") ~ ("is" | "es")? }
+// Support both English and German note naming
+key_note = @{ ("h" | "c" | "d" | "e" | "f" | "g" | "a" | "b") ~ ("is" | "es")? }
 key_mode = @{ "\\major" | "\\minor" }
 key_signature = { "\\key" ~ key_note ~ key_mode }
+
+// Partial (pickup measure)
+partial = { "\\partial" ~ duration }
 
 // Time signature
 time_signature = { "\\time" ~ (fraction | (unsigned ~ "/" ~ unsigned)) }
@@ -102,20 +146,63 @@ clef = { "\\clef" ~ (string_literal | clef_type | identifier) }
 // Format: \ottava #n where n is the octave offset (0, 1, -1, 2, -2, etc.)
 ottava = { "\\ottava" ~ "#" ~ int }
 
+
+// Articulations and dynamics
+articulation = @{ ">" | "^" | "_" | "." | "-" | "+" | "!" }
+articulation_command = @{ "\\accent" | "\\espressivo" | "\\staccato" | "\\staccatissimo" | "\\portato" | "\\tenuto" | "\\marcato"}
+ornament = @{ "\\prall" | "\\prallup" | "\\pralldown"   | "\\upprall" | "\\downprall" | "\\prallprall" | "\\lineprall" | "\\prallmordent" | "\\mordent" | "\\upmordent" | "\\downmordent" | "\\trill" | "\\turn" | "\\reverseturn" | "\\slashturn" | "\\haydnturn" }
+fermata = @{ "\\veryshortfermata" | "\\shortfermata" | "\\fermata" | "\\longfermata" | "\\verylongfermata" | "\\henzeshortfermata" | "\\henzelongfermata" }
+repeatsign = @{ "\\segno" | "\\coda" | "\\varcoda" }
+instrumentsign = @{ "\\upbow" | "\\downbow" | "\\flageolet" | "\\open" | "\\halfopen" | "\\lheel" | "\\rheel" | "\\ltoe" | "\\rtoe" | "\\snappizzicato" | "\\stopped" | "\\thumb" }
+accientsign = @{ "\\accentus" | "\\circulus"  | "\\ictus" | "\\semicirculus" | "\\signumcongruentiae"}
+dynamic = @{ "\\pp" | "\\p" | "\\mp" | "\\mf" | "\\f" | "\\ff" | "\\fff" | "\\ffff" | "\\fffff" | "\\fp" | "\\sf" | "\\sff" | "\\sp" | "\\spp" | "\\sfz" | "\\rfz" | "\\ppp" | "\\pppp" | "\\ppppp"}
+mark_attach_sign = { articulation_command | ornament | fermata | repeatsign | instrumentsign | accientsign | dynamic } 
+
 // Note components with precise parsing
-note_name = @{ ("c" | "d" | "e" | "f" | "g" | "a" | "b") ~ ("is" | "es")? }
+// Support both English and German note naming (h for B-natural in German)
+note_name = @{ ("h" | "c" | "d" | "e" | "f" | "g" | "a" | "b" ) ~ ("is" | "es" | "s" | "isis" | "eses")? }
 octave_modifier = @{ ("'" | ",")* }
 duration_number = @{ "128" | "64" | "32" | "16" | "8" | "4" | "2" | "1" }
 duration_dots = @{ "."* }
 duration = { duration_number ~ duration_dots }
 
-// Musical note with optional slur marker
+// Musical note with optional slur marker, fingering, repeat tie, and script/text attachments
 slur_marker = { "~" }
-musical_note = { note_name ~ octave_modifier ~ duration? ~ slur_marker? }
+// Slur markers - can be standalone (not necessarily paired in same block)
+slur_start = { "(" }
+slur_end = { ")" }
+
+// Multiplier for repetition (e.g., * 18 to repeat 18 times)
+multiplier = { "*" ~ unsigned }
+
+// Script attachment: ^, _, or - followed by optional text/markup
+script_direction = { "^" | "_" | "-" }
+script_text = { string_literal | markup_expression | articulation | unsigned }
+script_attachment = { script_direction ~ script_text? }
+
+// Accidental modifiers (must come after octave_modifier, before duration)
+// ! = forced reminder accidental
+// ? = cautionary accidental (in parentheses)
+accidental_modifier = @{ "!" | "?" }
+
+// Fingering can appear before or after duration
+musical_note = { note_name ~ octave_modifier ~ accidental_modifier? ~ duration? ~ script_attachment* ~ mark_attach_sign? ~ (slur_marker | repeat_tie)? ~ multiplier? }
+
+// Angle brackets for chords - supports duration, fingering, and script attachments like regular notes
+// Format: <notes with fingerings> [fingering] [duration] [fingering] [script_attachment]* [multiplier]?
+angle_brackets = { "<" ~ musical_note+ ~ ">"  ~ duration? ~ script_attachment* ~ mark_attach_sign? ~ multiplier? }
 
 // Rest
 rest_name = @{ "r" | "s" }
-rest = { rest_name ~ duration? }
+// Rest with optional dynamic markings
+rest = { rest_name ~ duration? ~ (crescendo_start | decrescendo_start | dynamic_stop)? ~ multiplier? }
+
+
+// Multi-measure rest (R with duration)
+multi_measure_rest = { "R" ~ duration? ~ multiplier? }
+
+// Chord repetition - 'q' repeats the previous chord
+chord_repetition = { "q" ~ duration?  ~ script_attachment* ~ mark_attach_sign? ~ multiplier? }
 
 // Bar lines
 bar_line = { "|" }
@@ -125,20 +212,58 @@ final_bar = { "|." }
 // Tempo markings
 tempo = { "\\tempo" ~ (string_literal | (duration ~ "=" ~ unsigned)) }
 
-// Articulations and dynamics
-articulation = @{ ">" | "^" | "_" | "." | "-" | "+" | "!" }
-dynamic = @{ "\\pp" | "\\p" | "\\mp" | "\\mf" | "\\f" | "\\ff" | "\\fff" | "\\ppp" }
+// Hairpin dynamics (crescendo/decrescendo)
+crescendo_start = { "\\" ~ "<" }
+decrescendo_start = { "\\" ~ ">" }
+dynamic_stop = { "\\" ~ "!" }
+
+// Repeat commands
+repeat_type = @{ "volta" | "unfold" | "percent" | "tremolo" }
+repeat_times = @{ digit+ }
+repeat_volta = { "\\repeat" ~ repeat_type ~ repeat_times ~ "{" ~ basic_music_sequence ~ "}" ~ alternative_block? }
+
+// Alternative block for repeats
+alternative_block = { "\\alternative" ~ "{" ~ alternative_choice* ~ "}" }
+alternative_choice = { "{" ~ basic_music_sequence ~ "}" }
+
+// Grace notes (ornaments)
+grace_notes = { "\\grace" ~ "{" ~ basic_music_sequence ~ "}" }
+acciaccatura_notes = { "\\acciaccatura" ~ "{" ~ basic_music_sequence ~ "}" }
+appoggiatura_notes = { "\\appoggiatura" ~ "{" ~ basic_music_sequence ~ "}" }
+
+// Repeat tie
+repeat_tie = { "\\repeatTie" }
+
+// Tuplet commands
+// \tuplet fraction { music }
+tuplet_fraction = { unsigned ~ "/" ~ unsigned }
+tuplet = { "\\tuplet" ~ tuplet_fraction ~ "{" ~ basic_music_sequence ~ "}" }
+
+// \tupletSpan duration
+tuplet_span = { "\\tupletSpan" ~ (duration | unsigned) }
+
+// Omit command (e.g., \omit TupletNumber)
+omit_command = { "\\omit" ~ identifier }
 
 // Basic music items (no modes to avoid circular reference)
+// IMPORTANT: Order matters in PEG parsing!
+// Put more specific patterns (like commands starting with \) before generic patterns (like musical_note)
 basic_music_item = { 
     modal_transpose |
-    musical_note | rest | bar_line | double_bar | final_bar |
-    key_signature | time_signature | clef | tempo | ottava |
-    articulation | dynamic | break_command | bar_number_check | 
-    arpeggio | bar_command | parentheses | angle_brackets |
-    pointandclickoff | numerictime | music_comment |
+    repeat_volta | grace_notes | acciaccatura_notes | appoggiatura_notes |
+    tuplet | tuplet_span | omit_command |
+    key_signature | time_signature | clef | tempo | ottava | partial |
+    break_command | bar_number_check | 
+    arpeggio | bar_command |
     override_command | set_command | merge_command |
-    variable_reference
+    pointandclickoff | numerictime |
+    custom_function_call |
+    variable_reference |
+    musical_note | rest | multi_measure_rest | chord_repetition |
+    bar_line | double_bar | final_bar |
+    slur_start | slur_end | angle_brackets |
+    crescendo_start | decrescendo_start | dynamic_stop |
+    music_comment
 }
 
 // Basic music sequence
@@ -180,16 +305,18 @@ lyricmode = { "\\lyricmode" ~ "{" ~ basic_lyric_sequence ~ "}" }
 music_mode = { fixed_mode | relative_mode | absolute_mode }
 
 // Full music item including modes
-music_item = { new_voice  | new_lyrics | basic_music_item | music_mode  }
+music_item = { new_voice  | new_lyrics | new_dynamics | new_nullvoice | basic_music_item | music_mode  }
 
 // Music sequence - properly parsed sequence of music items
 music_sequence = { music_item* }
 
 // New staff/voice commands - support both Staff and Voice
-context_type = @{ "Staff" | "Voice" | "PianoStaff" | "ChoirStaff" | "GrandStaff" | "StaffGroup" }
+context_type = @{ "Staff" | "Voice" | "PianoStaff" | "ChoirStaff" | "GrandStaff" | "StaffGroup" | "Dynamics" | "NullVoice" }
 new_context = { "\\new" ~ context_type ~ ("=" ~ (identifier | string_literal))? }
 new_voice = { "\\new" ~ "Voice" ~ ("=" ~ (identifier | string_literal))? ~ (simple_staff | music_mode | variable_reference) }
 new_lyrics = { "\\new" ~ "Lyrics" ~ ("=" ~ (identifier | string_literal))? ~ ((lyricsto ~ ("{" ~ lyric_sequence ~ "}" | variable_reference)) | lyricmode)? }
+new_dynamics = { "\\new" ~ "Dynamics" ~ ("=" ~ (identifier | string_literal))? ~ (simple_staff | music_mode | variable_reference | bare_music_block) }
+new_nullvoice = { "\\new" ~ "NullVoice" ~ ("=" ~ (identifier | string_literal))? ~ (simple_staff | music_mode | variable_reference | bare_music_block) }
 lyricsto = { "\\lyricsto" ~ string_literal }
 addlyrics = { "\\addlyrics" ~ "{" ~ lyric_sequence ~ "}" }
 
@@ -202,18 +329,20 @@ staff = { "\\new" ~ "Staff" ~ ("=" ~ (identifier | string_literal))? ~ "{" ~ sta
 simple_staff = { "{" ~ staff_body ~ "}" }
 
 // Score structure
-layout_block = { "\\layout" ~ "{" ~ (!"}" ~ ANY)* ~ "}" }
-midi_block = { "\\midi" ~ "{" ~ (!"}" ~ ANY)* ~ "}" }
+// Layout and MIDI blocks - ignore all content with nested braces support
+layout_content = { (nested_braces | (!"}" ~ ANY))* }
+layout_block = { "\\layout" ~ "{" ~ layout_content ~ "}" }
+midi_block = { "\\midi" ~ "{" ~ layout_content ~ "}" }
 
 // Simultaneous music (parallel staves)
-simultaneous_music = { "<<" ~ (staff | simple_staff | music_mode | new_voice | new_lyrics)* ~ ">>" }
+simultaneous_music = { "<<" ~ (staff | simple_staff | music_mode | new_voice | new_lyrics | new_dynamics | new_nullvoice)* ~ ">>" }
 
 // Piano staff - contains simultaneous music
 piano_staff = { "\\new" ~ "PianoStaff" ~ ("=" ~ (identifier | string_literal))? ~ simultaneous_music }
 
 // Score content with more options
 score_content = { 
-    piano_staff | staff | simple_staff | music_mode  | new_lyrics | addlyrics | simultaneous_music
+    piano_staff | staff | simple_staff | music_mode  | new_lyrics | new_dynamics | new_nullvoice | addlyrics | simultaneous_music
 }
 score = { "\\score" ~ "{" ~ score_content ~ layout_block? ~ midi_block? ~ "}" }
 
@@ -224,8 +353,8 @@ bookpart = { "\\bookpart" ~ "{" ~ book_item* ~ "}" }
 
 // Top level structure
 top_level_item = { 
-    paper_block | version | header | score | book | bookpart | music_mode | 
-    include_directive | variable_definition | scheme_code | 
+    paper_block | version | language | header | score | book | bookpart | music_mode | 
+    include_directive | variable_definition | scheme_code | layout_block |
     pointandclickoff | simple_command
 }
 lilypond_file = { SOI ~ top_level_item* ~ EOI }

@@ -3,7 +3,7 @@
 
 %https://www.youtube.com/watch?v=jCu-T9E0MvM
 %https://www.youtube.com/watch?v=4rs4IYUoI1Y
-notensatz = \markup  "Wei Zheng"
+
 
 FSus = #(make-span-event 'SustainEvent STOP)
 NSus = #(make-span-event 'SustainEvent START)
@@ -132,11 +132,11 @@ RH=  \relative c'' {
   }
   \set fingeringOrientations = #'(up)
   \repeat volta 2 {
-    e8. ) g,16[ ( f' e]
-    d8.^\markup { \finger \overtie "34" } ) f,16[ ( e' d]
-    c8.^\markup { \finger \overtie "34" } ) e,16[ ( d' c]
-    h8 ) r16 e, ( e' ) r r e ( e' ) r r dis, [ (
-    e16 ) ] r r16 dis ( e dis e16 dis e h d c
+    e8. ) g,16 ( f' e
+    d8.^\markup { \finger \overtie "34" } ) f,16 ( e' d
+    c8.^\markup { \finger \overtie "34" } ) e,16 ( d' c
+    h8 ) r16 e, ( e' ) r r e ( e' ) r r dis,  (
+    e16 )  r r16 dis ( e dis e16 dis e h d c
     a8 ) r16 c, ( e a
     h8 ) r16 e, ( gis h c8 ) r16 e, ( e' dis
     e dis e h d c
@@ -144,12 +144,12 @@ RH=  \relative c'' {
   }
   \alternative {
     { a8 ) r16 h ( c d ) }
-    { a8\repeatTie r16 <e-1 c'-5>-. ( <f-1 c'-5>-. <e-1 g-2 c-5>-. ) }
+    { a8\repeatTie r16 <e-1 c'-5>-"." ( <f-1 c'-5>-"." <e-1 g-2 c-5>-"." ) }
   }
 
   \grace { f16-1 ( a-2 } c4-3 f16.-4 e32-3
   \set Staff.beatStructure = #'(2 1)
-  e8 d)  b'16.-4 a32-3 a16-3( [ g f e-3 d c ]
+  e8 d)  b'16.-4 a32-3 a16-3(  g f e-3 d c 
   b8-3 a )  \acciaccatura { b32-3 ( } a32-2 g-1 a-2 b-3 
   c4^\markup { \finger \overtie "41" }  ) (d16-2 dis ) | %27
   \set Staff.beatStructure = #'(3)
@@ -163,8 +163,8 @@ RH=  \relative c'' {
   e32-3 f-4 e dis e h e dis e h e dis
   e8.
   \set Staff.beatStructure = #'(3)
-  h16[ (  e dis]
-  e8. ) h16[( e])  r
+  h16 (  e dis
+  e8. ) h16( e)  r
   r dis( e) r r
   \set Staff.beatStructure = #'(3)
   dis ( e dis e h d c
@@ -173,11 +173,11 @@ RH=  \relative c'' {
   r16 e, ( e' dis e dis e h d c a8 )
   r16 c, ( e a h8 ) r16 e, ( c' h
   a8 ) r16 h16 ( c d
-  e8. ) g,16[ ( f' e]
-  d8.^\markup { \finger \overtie "34" } ) f,16[ ( e' d]
-  c8.^\markup { \finger \overtie "34" } ) e,16[ ( d' c]
+  e8. ) g,16 ( f' e
+  d8.^\markup { \finger \overtie "34" } ) f,16 ( e' d
+  c8.^\markup { \finger \overtie "34" } ) e,16 ( d' c
   h8 ) r16 e,(  e' ) r
-  r16 e ( e' ) r r dis,([ e]) r r
+  r16 e ( e' ) r r dis,( e) r r
   dis ( e dis
   e dis e h d c
   a8 ) r16 c, ( e a
@@ -189,16 +189,16 @@ RH=  \relative c'' {
   r16 c, ( e a
   h8 ) r16 e, ( c' h
   a8 ) r r |%59
-  <e-1 g-2 b-3 cis-5>4.-> |%60
-  <f-1 a-2 d-5>4-> <cis'-2 e-4>16 <d-3 f-5> |%61
+  <e-1 g-2 b-3 cis-5>4.-">" |%60
+  <f-1 a-2 d-5>4-">" <cis'-2 e-4>16 <d-3 f-5> |%61
   <gis,-1 d'-3 f-5>4 <gis-1 d'-3 f-5>8|%62
   <a-1 c!-3 e-5>4.|%63
   <f-1 d'-5>4( <e-1 c'-5>16 <d-1 h'-5> |%64
   <c-1 fis-3 a-5>4) <c-1 a'-5>8 |%65
   <c a'>8( <e c'> <d h'> |%66
   <c a'>4.)
-  <e g b cis>4.->
-  <f a d>4-> <cis' e>16 <d f>
+  <e g b cis>4.-">"
+  <f a d>4-">" <cis' e>16 <d f>
   <d f>4 q8 q4.
   <g, es'>4( <f d'>16 <es c'>
   <d f b>4) <d f a>8 <d f gis>4 <d f gis>8
@@ -209,7 +209,7 @@ RH=  \relative c'' {
     a,16-1 ( c-2 e-3 a-1 c-3 e-5 d-4 c-3 h-2 |%77
     \omit TupletNumber
     a c e a c e d c h |%78
-    \myOttava #1
+    \ottava #1
     a c e a c e d c-3 h-1 |%79
     b-3 a-1 gis-3 g-1 fis-3 f-2 e-1 dis-3 d-1 |%80
     \ottava #0
@@ -222,11 +222,11 @@ RH=  \relative c'' {
   c8 ) r16 e, ( e' dis e dis e h d c a8 )
   r16 c, ( e a h8 ) r16 e, ( c' h
   a8 ) r16 h16 ( c d
-  e8. ) g,16[ ( f' e]
-  d8. ) f,16[ ( e' d]
-  c8. ) e,16[ ( d' c]
+  e8. ) g,16 ( f' e
+  d8. ) f,16 ( e' d
+  c8. ) e,16 ( d' c
   h8 ) r16 e, ( e' ) r
-  r16 e[ ( e' )] r r dis,[( e]) r r
+  r16 e ( e' ) r r dis,( e) r r
   dis ( e dis e dis e h d c
   a8 ) r16 c, ( e a h8 ) r16
   e, ( gis h c8)  r16 e, ( e' dis e dis e h d c a8 )
@@ -256,7 +256,7 @@ LH =  \relative c {
   \alternative {
     { a,16 e' a r }
     {
-      a,16 [ e' a16 ] r
+      a,16  e' a16  r
       \set Timing.measurePosition = #(ly:make-moment -1 8) r8
     }
   }
@@ -265,8 +265,8 @@ LH =  \relative c {
     c,16 g' c r
     r8 g,16 g' h r
     r8
-    a,16 e' a r r8 e,16 -. e' ( e' ) r r
-    \clef treble e16_[ ( e') ]
+    a,16 e' a r r8 e,16-"." e' ( e' ) r r
+    \clef treble e16_ ( e') 
     r r dis e r r16 dis e r r8 R4.
     \clef bass a,,,16 e' a r16
     r8 e,16 e' gis r r8
@@ -291,17 +291,17 @@ LH =  \relative c {
   <c-5 e-3>8 r16 <f-2 g-1> <e-3 g-1> <d-4 f-2 g-1> |%30
   <c-5 e-3 g-1>8
   \clef bass
-  <f,-5 a-3>8[ <g-4 h-2>]
+  <f,-5 a-3>8 <g-4 h-2>
   \clef treble
   c8 r16 <f g> <e g> <d f g>
   <c e g>8
   \clef bass
-  <f, a>8[ <g h>]
+  <f, a>8 <g h>
   <gis h>8 r r R4.
   r4 r16
   \clef treble
-  dis''16 ([
-  e ] ) r r dis ( e ) r
+  dis''16 (
+  e  ) r r dis ( e ) r
   R4. \clef bass
   a,,,16 e' a r16 r8
   e,16 e' gis r r8
@@ -314,20 +314,20 @@ LH =  \relative c {
   g,16 g' h r r8
   a,16 e' a r r8
   e,16 e' e' r r
-  \clef treble e16_[(
-  e')] r r dis( e) r
+  \clef treble e16_(
+  e') r r dis( e) r
   r dis( e) r r8 R4.
   \clef bass a,,,16 e' a r16 r8
   e,16 e' gis r r8 a,16 e' a r r8 R4. a,16 e' a r r8
   e,16 e' gis r r8
 
-  \repeat unfold 5 { a,16(-.-3 a-.-2 a-.-1 a-.-3 a-.-2 a)-.-1 }
-  <a d,>-.( <a d,>-. <a d,>-. <a d,>-. <a d,>-. <a d,>-.) |%64
-  <a dis,>-.( q-. q-. q-. q-. q-.) |%65
-  <e a>(-. <e a>-. <e a>-. <e a>-. <e gis>-. <e gis>)-.|%66
-  <a a,> a(-. a-. a-. a-. a-.)  |%67
-  \repeat unfold 3 { a(-. a-. a-. a-. a-. a)-. }
-  \repeat unfold 18 b
+  \repeat unfold 5 { a,16-3-"." ( a-2-"." a-1-"." a-3-"." a-2-"." a-1-".") }
+  <a d,>-"."( <a d,>-"." <a d,>-"." <a d,>-"." <a d,>-"." <a d,>-".") |%64
+  <a dis,>-"."( q-"." q-"." q-"." q-"." q-".") |%65
+  <e a>-"."( <e a>-"." <e a>-"." <e a>-"." <e gis>-"." <e gis>-".")|%66
+  <a a,> a-"."( a-"." a-"." a-"." a-".")  |%67
+  \repeat unfold 3 { a-"."( a-"." a-"." a-"." a-"." a-".") }
+  \repeat unfold 18 {b}
   h! h h h h h |%74
   c4 r8 |%75
   <e gis>8 r r |% 76
@@ -347,8 +347,8 @@ LH =  \relative c {
   g,16 g' h r r8
   a,16 e' a r r8
   e,16 e'( e') r r
-  \clef treble e16[ (
-  e']) r r dis( e) r
+  \clef treble e16 (
+  e') r r dis( e) r
   r dis( e) r r8 R4.
   \clef bass a,,,16 e' a r16 r8
   e,16 e' gis r r8
@@ -359,12 +359,12 @@ LH =  \relative c {
 }
 
 pedree = {
-  \repeat unfold 3 { s4\NSus s8\FSus }
+  \repeat unfold 3 { s4 \NSus s8 \FSus }
 }
 pedtwo = {
   \pedree
   s4.
-  \repeat unfold 2 { s4\NSus s8\FSus }
+  \repeat unfold 2 { s4 \NSus s8 \FSus }
 }
 
 ped = {
@@ -380,7 +380,7 @@ ped = {
   \pedtwo
   s4.
   \pedree
-  s4.\NSus s8. s\FSus
+  s4. \NSus s8. s \FSus
   s4. s
   \pedree
   s4. \repeat unfold 2 { s4\NSus s8\FSus }
@@ -510,7 +510,7 @@ StrukturI= {
   title = "Für Elise"
   subtitle = "A-Moll WoO 59"
   subsubtitle = ##f
-  poet = \markup \notensatz
+  poet =  "Wei Zheng"
   composer = "Ludwig van Beethoven (1770-1827)"
   piece = ##f
   opus = ##f
@@ -570,32 +570,24 @@ print-page-number = ##t
   annotate-spacing = ##f
 }
 
-theMusic = {
+
+
+\score
+{
     \new PianoStaff="leadsheet"
     <<
-      \new Staff="Discant" \new Voice \RH
+      \new Staff="Discant" {\new Voice \RH}
       
       \new Dynamics \Dyn
       
       \new Staff="Bass"
-      <<
+      {
         \set Staff.midiInstrument = "acoustic grand"
         \new Voice \LH
         \new NullVoice \Struktur
         \new NullVoice \StrukturI
-      >>
+      }
       \new Dynamics \ped
     >>
 }
 
-\score
-{
-    \theMusic
-}
-
-\score {
-    \unfoldRepeats { 
-        \theMusic
-    }
-    \midi { }
-}
