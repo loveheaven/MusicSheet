@@ -1,7 +1,6 @@
 use pest::Parser;
 use pest_derive::Parser;
 use serde::{Serialize, Deserialize};
-use tauri::utils::config::parse;
 use std::{collections::HashMap};
 
 #[derive(Parser)]
@@ -218,6 +217,12 @@ fn parse_top_level_item(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedMu
             Rule::version => {
                 // Skip version for now
             },
+            Rule::language => {
+                // Parse language directive (e.g., \language "deutsch")
+                // This affects note name interpretation, but we already support 'h' for B-natural
+                // So we can safely skip this for now
+                println!("[parse_top_level_item] Found language directive: {}", inner_pair.as_str());
+            },
             Rule::header => {
                 parse_header(inner_pair, parsed)?;
             },
@@ -348,6 +353,14 @@ fn parse_simultaneous_music(pair: pest::iterators::Pair<Rule>, parsed: &mut Pars
             Rule::new_lyrics => {
                 parse_new_lyrics(inner_pair, parsed)?;
             },
+            Rule::new_dynamics => {
+                // Parse \new Dynamics context - for now, treat it similar to a staff
+                parse_new_dynamics(inner_pair, parsed)?;
+            },
+            Rule::new_nullvoice => {
+                // Parse \new NullVoice context - used for structural information
+                parse_new_nullvoice(inner_pair, parsed)?;
+            },
             _ => {}
         }
     }
@@ -363,10 +376,34 @@ fn parse_header(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedMusic) -> 
             for item_pair in inner_pair.into_inner() {
                 match item_pair.as_rule() {
                     Rule::identifier => key = item_pair.as_str().to_string(),
-                    Rule::string_literal => {
-                        let s = item_pair.as_str();
-                        // Remove quotes
-                        value = s[1..s.len()-1].to_string();
+                    Rule::header_value => {
+                        // Parse different types of header values
+                        for value_pair in item_pair.into_inner() {
+                            match value_pair.as_rule() {
+                                Rule::string_literal => {
+                                    let s = value_pair.as_str();
+                                    // Remove quotes
+                                    value = s[1..s.len()-1].to_string();
+                                },
+                                Rule::boolean_literal => {
+                                    // For boolean values like ##f or ##t, store as-is
+                                    value = value_pair.as_str().to_string();
+                                },
+                                Rule::markup_expression => {
+                                    // For markup expressions, store the raw text
+                                    value = value_pair.as_str().to_string();
+                                },
+                                Rule::scheme_code => {
+                                    // For scheme code, store the raw text
+                                    value = value_pair.as_str().to_string();
+                                },
+                                Rule::identifier => {
+                                    // For identifiers (variable references), store as-is
+                                    value = value_pair.as_str().to_string();
+                                },
+                                _ => {}
+                            }
+                        }
                     }
                     _ => {}
                 }
@@ -382,7 +419,9 @@ fn parse_header(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedMusic) -> 
                 "tempo" => {
                     parsed.tempo = Some(value);
                 },
-                _ => {}
+                _ => {
+                    // Ignore other header fields like subsubtitle, instrumentName, etc.
+                }
             }
         }
     }
@@ -535,6 +574,27 @@ fn parse_variable_definition(pair: pest::iterators::Pair<Rule>, parsed: &mut Par
                         },
                         Rule::lyricmode => {
                             var_lyric = parse_lyric_mode(value_pair.clone())?;
+                        },
+                        Rule::scheme_code => {
+                            // Parse Scheme code (e.g., #(make-span-event 'SustainEvent STOP))
+                            // For now, we just acknowledge it exists but don't process it further
+                            println!("[DEBUG] Variable {} contains scheme_code: {}", var_name, value_pair.as_str());
+                        },
+                        Rule::custom_function_call => {
+                            // Custom function calls like \dynamictext "dimin."
+                            // For now, we just acknowledge it exists but don't process it further
+                            println!("[DEBUG] Variable {} contains custom_function_call: {}", var_name, value_pair.as_str());
+                        },
+                        Rule::bare_music_block => {
+                            // Parse bare music block (e.g., { notes })
+                            println!("[DEBUG] Variable {} contains bare_music_block", var_name);
+                            for block_pair in value_pair.into_inner() {
+                                if block_pair.as_rule() == Rule::basic_music_sequence {
+                                    let mut last_duration = String::from("4");
+                                    let mut last_octave = 3i32;
+                                    parse_basic_music_item(block_pair, &mut var_notes, parsed, &mut last_duration, &mut last_octave, OctaveMode::Absolute)?;
+                                }
+                            }
                         },
                         _ => {}
                     }
@@ -760,6 +820,79 @@ fn parse_new_lyrics(pair: pest::iterators::Pair<Rule>, parsed: &mut ParsedMusic)
     Ok(())
 }
 
+fn parse_new_dynamics(pair: pest::iterators::Pair<Rule>, _parsed: &mut ParsedMusic) -> Result<(), String> {
+    // Parse \new Dynamics context
+    // Dynamics contexts contain dynamic markings, hairpins, etc.
+    // For now, we'll just parse and ignore the content since we're not tracking dynamics separately
+    
+    for inner_pair in pair.into_inner() {
+        match inner_pair.as_rule() {
+            Rule::identifier => {
+                // Name of the Dynamics context (e.g., Dyn)
+                // We can ignore this for now
+            },
+            Rule::string_literal => {
+                // Name of the Dynamics context as string
+                // We can ignore this for now
+            },
+            Rule::simple_staff => {
+                // Dynamics content in braces { ... }
+                // We could parse this but don't need to store it
+                println!("[parse_new_dynamics] Ignoring simple_staff content");
+            },
+            Rule::music_mode => {
+                // Dynamics content in a music mode
+                println!("[parse_new_dynamics] Ignoring music_mode content");
+            },
+            Rule::variable_reference => {
+                // Reference to a variable containing dynamics (e.g., \Dyn)
+                let ref_str = inner_pair.as_str();
+                println!("[parse_new_dynamics] Ignoring variable reference: {}", ref_str);
+            },
+            Rule::bare_music_block => {
+                // Bare music block
+                println!("[parse_new_dynamics] Ignoring bare_music_block content");
+            },
+            _ => {}
+        }
+    }
+    
+    Ok(())
+}
+
+fn parse_new_nullvoice(pair: pest::iterators::Pair<Rule>, _parsed: &mut ParsedMusic) -> Result<(), String> {
+    // Parse \new NullVoice context
+    // NullVoice contexts are used for structural information (bar lines, lyrics alignment, etc.)
+    // but don't produce actual note output. We'll parse and ignore the content.
+    
+    for inner_pair in pair.into_inner() {
+        match inner_pair.as_rule() {
+            Rule::identifier => {
+                // Name of the NullVoice context
+            },
+            Rule::string_literal => {
+                // Name as string
+            },
+            Rule::simple_staff => {
+                println!("[parse_new_nullvoice] Ignoring simple_staff content");
+            },
+            Rule::music_mode => {
+                println!("[parse_new_nullvoice] Ignoring music_mode content");
+            },
+            Rule::variable_reference => {
+                let ref_str = inner_pair.as_str();
+                println!("[parse_new_nullvoice] Ignoring variable reference: {}", ref_str);
+            },
+            Rule::bare_music_block => {
+                println!("[parse_new_nullvoice] Ignoring bare_music_block content");
+            },
+            _ => {}
+        }
+    }
+    
+    Ok(())
+}
+
 fn parse_lyric_sequence(pair: pest::iterators::Pair<Rule>,
     parsed: &ParsedMusic) -> Result<Option<Lyric>, String> {
     let mut lyrics_text = String::new();
@@ -880,6 +1013,14 @@ fn parse_music_sequence(pair: pest::iterators::Pair<Rule>,
                         Rule::new_lyrics => {
                             parse_new_lyrics(item, parsed)?;
                         },
+                        Rule::new_dynamics => {
+                            // Handle \new Dynamics
+                            parse_new_dynamics(item, parsed)?;
+                        },
+                        Rule::new_nullvoice => {
+                            // Handle \new NullVoice
+                            parse_new_nullvoice(item, parsed)?;
+                        },
                         _ => {
                             println!("[parse_music_sequence] 跳过 music_item 内部规则: {:?}", item.as_rule());
                         }
@@ -911,7 +1052,7 @@ enum OctaveMode {
 fn parse_music_mode(pair: pest::iterators::Pair<Rule>, 
     notes: &mut Vec<LilyPondNote>, 
     parsed: &mut ParsedMusic) -> Result<(), String> {    
-    let input_str = pair.as_str();
+    let _input_str = pair.as_str();
     let mut last_duration = "4".to_string();
     let mode_type = pair.as_rule();
     
@@ -1158,7 +1299,8 @@ fn parse_basic_music_item(pair: pest::iterators::Pair<Rule>,
                 }
             },
             Rule::musical_note => {
-                let mut note = parse_musical_note(inner_pair, last_duration, last_octave, mode)?;
+                let (note_item, multiplier) = parse_musical_note_with_multiplier(inner_pair, last_duration, last_octave, mode)?;
+                let mut note = note_item;
                 
                 // If the previous note has has_slur=true (from ~), mark this note as group_end
                 // Only check has_slur to avoid conflicts with parentheses slurs
@@ -1167,35 +1309,52 @@ fn parse_basic_music_item(pair: pest::iterators::Pair<Rule>,
                     note.group_end = true;
                 }
                 
-                notes.push(note);
+                // Handle multiplier - repeat the note N times
+                for _ in 0..multiplier {
+                    notes.push(note.clone());
+                }
             },
             Rule::rest => {
-                let rest = parse_rest(inner_pair, last_duration)?;
-                notes.push(rest);
+                let (rest, multiplier) = parse_rest_with_multiplier(inner_pair, last_duration)?;
+                // Handle multiplier - repeat the rest N times
+                for _ in 0..multiplier {
+                    notes.push(rest.clone());
+                }
+            },
+            Rule::multi_measure_rest => {
+                // Multi-measure rest 'R' - similar to regular rest but for multiple measures
+                let (multi_rest, multiplier) = parse_multi_measure_rest_with_multiplier(inner_pair, last_duration)?;
+                // Handle multiplier - repeat the rest N times
+                for _ in 0..multiplier {
+                    notes.push(multi_rest.clone());
+                }
+            },
+            Rule::chord_repetition => {
+                // Chord repetition 'q' - repeats the last chord
+                // For now, we'll treat it as a special rest marker
+                let (chord_rep, multiplier) = parse_chord_repetition_with_multiplier(inner_pair, last_duration)?;
+                // Handle multiplier - repeat the chord N times
+                for _ in 0..multiplier {
+                    notes.push(chord_rep.clone());
+                }
             },
             Rule::angle_brackets => {
-                let chord: LilyPondNote = parse_chord(inner_pair, last_duration, last_octave, mode)?;
-                notes.push(chord);
+                let (chord, multiplier): (LilyPondNote, u32) = parse_chord_with_multiplier(inner_pair, last_duration, last_octave, mode)?;
+                // Handle multiplier - repeat the chord N times
+                for _ in 0..multiplier {
+                    notes.push(chord.clone());
+                }
             },
-            Rule::parentheses => {
-                // println!("[parse_basic_music_item] 找到括号: {}", inner_pair.as_str());
-                
+            Rule::slur_start => {
                 // Mark the previous note as group_start (the note before the opening parenthesis)
                 if let Some(last_note) = notes.last_mut() {
                     last_note.group_start = true;
-                    // println!("[parse_basic_music_item] 设置 group_start 为 true: pitch={}", last_note.pitch);
                 }
-                
-                // Parse notes inside parentheses
-                let notes_before_paren = notes.len();
-                parse_parentheses(inner_pair, notes, parsed, last_duration, last_octave, mode)?;
-                
-                // Mark the last note inside parentheses as group_end
-                if notes.len() > notes_before_paren {
-                    if let Some(last_note_in_paren) = notes.last_mut() {
-                        last_note_in_paren.group_end = true;
-                        // println!("[parse_basic_music_item] 设置 group_end 为 true: pitch={}", last_note_in_paren.pitch);
-                    }
+            },
+            Rule::slur_end => {
+                // Mark the previous note as group_end (the note before the closing parenthesis)
+                if let Some(last_note) = notes.last_mut() {
+                    last_note.group_end = true;
                 }
             },
             Rule::variable_reference => {
@@ -1220,28 +1379,74 @@ fn parse_basic_music_item(pair: pest::iterators::Pair<Rule>,
                 }
             },
             
+            Rule::tuplet => {
+                // Handle \tuplet fraction { music }
+                // Parse the music sequence inside the tuplet
+                for tuplet_part in inner_pair.into_inner() {
+                    match tuplet_part.as_rule() {
+                        Rule::basic_music_sequence => {
+                            parse_basic_music_item(tuplet_part, notes, parsed, last_duration, last_octave, mode)?;
+                        },
+                        _ => {} // Ignore tuplet_fraction for now
+                    }
+                }
+            },
+            
+            Rule::tuplet_span => {
+                // Ignore \tupletSpan command for now
+                // This sets the duration for automatic tuplet grouping
+            },
+            
+            Rule::omit_command => {
+                // Ignore \omit command for now
+                // This is used to hide certain elements like TupletNumber
+            },
+            
+            Rule::crescendo_start | Rule::decrescendo_start | Rule::dynamic_stop => {
+                // Ignore dynamic markings - they are visual annotations for crescendo/decrescendo
+                // \< = crescendo start, \> = decrescendo start, \! = dynamic stop
+            },
+            
+            Rule::custom_function_call => {
+                // Ignore custom function calls like \dynamictext "cresc."
+                // These are user-defined event functions that add visual annotations
+                // Example: \dynamictext "cresc." or \myOttava #1
+                println!("[parse_basic_music_item] Ignoring custom function call: {}", inner_pair.as_str());
+            },
+            
             _ => {}
         }
     }
     Ok(())
 }
 
-fn parse_parentheses(pair: pest::iterators::Pair<Rule>, 
-    notes: &mut Vec<LilyPondNote>, 
-    parsed: &mut ParsedMusic,
+// Helper function to parse musical note with multiplier support
+fn parse_musical_note_with_multiplier(pair: pest::iterators::Pair<Rule>, 
     last_duration: &mut String,
     last_octave: &mut i32,
-    mode: OctaveMode) -> Result<(), String> {
-    // Parse notes inside parentheses (e.g., (e'8) or (d'8))
-    for inner_pair in pair.into_inner() {
-        match inner_pair.as_rule() {
-            Rule::music_sequence => {
-                parse_music_sequence(inner_pair, notes, parsed, last_duration,  last_octave, mode)?;
-            },
-            _ => {}
+    mode: OctaveMode) -> Result<(LilyPondNote, u32), String> {
+    let mut multiplier = 1u32;
+    let mut has_multiplier = false;
+    
+    // First pass: check for multiplier and extract it
+    let inner_pairs: Vec<_> = pair.clone().into_inner().collect();
+    for inner_pair in &inner_pairs {
+        if inner_pair.as_rule() == Rule::multiplier {
+            // Parse multiplier: "* unsigned"
+            let mult_str = inner_pair.as_str();
+            if let Some(num_str) = mult_str.split('*').nth(1) {
+                if let Ok(num) = num_str.trim().parse::<u32>() {
+                    multiplier = num.max(1);  // At least 1
+                    has_multiplier = true;
+                }
+            }
         }
     }
-    Ok(())
+    
+    // Parse the actual note, using the original pair which contains all components
+    let note = parse_musical_note(pair, last_duration, last_octave, mode)?;
+    
+    Ok((note, if has_multiplier { multiplier } else { 1 }))
 }
 
 fn parse_musical_note(pair: pest::iterators::Pair<Rule>, 
@@ -1274,6 +1479,17 @@ fn parse_musical_note(pair: pest::iterators::Pair<Rule>,
             },
             Rule::slur_marker => {
                 has_slur = true;
+            },
+            Rule::fingering => {
+                // Ignore fingering marks (e.g., -1, -2, -3) for now
+                // These are used to indicate which finger to use
+            },
+            Rule::script_attachment => {
+                // Ignore script attachments (^, _, - with optional text/markup) for now
+                // These are used for articulation marks and text positioning
+            },
+            Rule::multiplier => {
+                // Ignore multiplier - it's handled by parse_musical_note_with_multiplier
             },
             _ => {
                 println!("[DEBUG] parse_musical_note - Unhandled inner rule: {:?}", inner_pair.as_rule());
@@ -1321,6 +1537,32 @@ fn parse_musical_note(pair: pest::iterators::Pair<Rule>,
     })
 }
 
+// Helper function to parse rest with multiplier support
+fn parse_rest_with_multiplier(pair: pest::iterators::Pair<Rule>, last_duration: &mut String) -> Result<(LilyPondNote, u32), String> {
+    let mut multiplier = 1u32;
+    let mut has_multiplier = false;
+    
+    // First pass: check for multiplier and extract it
+    let inner_pairs: Vec<_> = pair.clone().into_inner().collect();
+    for inner_pair in &inner_pairs {
+        if inner_pair.as_rule() == Rule::multiplier {
+            // Parse multiplier: "* unsigned"
+            let mult_str = inner_pair.as_str();
+            if let Some(num_str) = mult_str.split('*').nth(1) {
+                if let Ok(num) = num_str.trim().parse::<u32>() {
+                    multiplier = num.max(1);  // At least 1
+                    has_multiplier = true;
+                }
+            }
+        }
+    }
+    
+    // Parse the actual rest, using the original pair
+    let rest = parse_rest(pair, last_duration)?;
+    
+    Ok((rest, if has_multiplier { multiplier } else { 1 }))
+}
+
 fn parse_rest(pair: pest::iterators::Pair<Rule>, last_duration: &mut String) -> Result<LilyPondNote, String> {
     let mut duration = last_duration.clone();
     let mut dots = String::new();
@@ -1333,6 +1575,12 @@ fn parse_rest(pair: pest::iterators::Pair<Rule>, last_duration: &mut String) -> 
                 duration = dur;
                 dots = d;
                 *last_duration = duration.clone();
+            },
+            Rule::multiplier => {
+                // Ignore multiplier - it's handled by parse_rest_with_multiplier
+            },
+            Rule::crescendo_start | Rule::decrescendo_start | Rule::dynamic_stop => {
+                // Ignore dynamic markings - they are visual annotations
             },
             _ => {}
         }
@@ -1354,6 +1602,170 @@ fn parse_rest(pair: pest::iterators::Pair<Rule>, last_duration: &mut String) -> 
         group_end: false,
         has_slur: false,
     })
+}
+
+// Helper function to parse multi-measure rest with multiplier support
+fn parse_multi_measure_rest_with_multiplier(pair: pest::iterators::Pair<Rule>, last_duration: &mut String) -> Result<(LilyPondNote, u32), String> {
+    let mut multiplier = 1u32;
+    let mut has_multiplier = false;
+    
+    // First pass: check for multiplier and extract it
+    let inner_pairs: Vec<_> = pair.clone().into_inner().collect();
+    for inner_pair in &inner_pairs {
+        if inner_pair.as_rule() == Rule::multiplier {
+            // Parse multiplier: "* unsigned"
+            let mult_str = inner_pair.as_str();
+            if let Some(num_str) = mult_str.split('*').nth(1) {
+                if let Ok(num) = num_str.trim().parse::<u32>() {
+                    multiplier = num.max(1);  // At least 1
+                    has_multiplier = true;
+                }
+            }
+        }
+    }
+    
+    // Parse the actual rest, using the original pair
+    let rest = parse_multi_measure_rest(pair, last_duration)?;
+    
+    Ok((rest, if has_multiplier { multiplier } else { 1 }))
+}
+
+fn parse_multi_measure_rest(pair: pest::iterators::Pair<Rule>, last_duration: &mut String) -> Result<LilyPondNote, String> {
+    let mut duration = last_duration.clone();
+    let mut dots = String::new();
+    
+    for inner_pair in pair.into_inner() {
+        match inner_pair.as_rule() {
+            Rule::duration => {
+                let (dur, d) = parse_duration(inner_pair)?;
+                duration = dur;
+                dots = d;
+                *last_duration = duration.clone();
+            },
+            Rule::multiplier => {
+                // Ignore multiplier - it's handled by parse_multi_measure_rest_with_multiplier
+            },
+            _ => {}
+        }
+    }
+    
+    // Return a rest note with "R" to indicate multi-measure rest
+    Ok(LilyPondNote {
+        pitch: "R".to_string(), // Multi-measure rest (uppercase R)
+        duration,
+        octave: 0, // Rests don't have octaves
+        dots,
+        chord_notes: Vec::new(),
+        clef: None,
+        time_sig: None,
+        key_sig: None,
+        ottava: None,
+        arpeggio: false,
+        note_type: NoteType::Rest,
+        group_start: false,
+        group_end: false,
+        has_slur: false,
+    })
+}
+
+// Helper function to parse chord repetition with multiplier support
+fn parse_chord_repetition_with_multiplier(pair: pest::iterators::Pair<Rule>, last_duration: &mut String) -> Result<(LilyPondNote, u32), String> {
+    let mut multiplier = 1u32;
+    let mut has_multiplier = false;
+    
+    // First pass: check for multiplier and extract it
+    let inner_pairs: Vec<_> = pair.clone().into_inner().collect();
+    for inner_pair in &inner_pairs {
+        if inner_pair.as_rule() == Rule::multiplier {
+            // Parse multiplier: "* unsigned"
+            let mult_str = inner_pair.as_str();
+            if let Some(num_str) = mult_str.split('*').nth(1) {
+                if let Ok(num) = num_str.trim().parse::<u32>() {
+                    multiplier = num.max(1);  // At least 1
+                    has_multiplier = true;
+                }
+            }
+        }
+    }
+    
+    // Parse the actual repetition, using the original pair
+    let rep = parse_chord_repetition(pair, last_duration)?;
+    
+    Ok((rep, if has_multiplier { multiplier } else { 1 }))
+}
+
+fn parse_chord_repetition(pair: pest::iterators::Pair<Rule>, last_duration: &mut String) -> Result<LilyPondNote, String> {
+    let mut duration = last_duration.clone();
+    let mut dots = String::new();
+    
+    for inner_pair in pair.into_inner() {
+        match inner_pair.as_rule() {
+            Rule::duration => {
+                let (dur, d) = parse_duration(inner_pair)?;
+                duration = dur;
+                dots = d;
+                *last_duration = duration.clone();
+            },
+            Rule::fingering => {
+                // Ignore fingering for now
+            },
+            Rule::script_attachment => {
+                // Ignore script attachments for now
+            },
+            Rule::multiplier => {
+                // Ignore multiplier - it's handled by parse_chord_repetition_with_multiplier
+            },
+            _ => {}
+        }
+    }
+    
+    // Return a special note indicating chord repetition
+    // Using pitch "q" to mark this as a chord repetition
+    Ok(LilyPondNote {
+        pitch: "q".to_string(), // Chord repetition marker
+        duration,
+        octave: 0,
+        dots,
+        chord_notes: Vec::new(),
+        clef: None,
+        time_sig: None,
+        key_sig: None,
+        ottava: None,
+        arpeggio: false,
+        note_type: NoteType::Default, // Could create a new ChordRepetition type if needed
+        group_start: false,
+        group_end: false,
+        has_slur: false,
+    })
+}
+
+// Helper function to parse chord with multiplier support
+fn parse_chord_with_multiplier(pair: pest::iterators::Pair<Rule>, 
+    last_duration: &mut String,
+    last_octave: &mut i32,
+    mode: OctaveMode) -> Result<(LilyPondNote, u32), String> {
+    let mut multiplier = 1u32;
+    let mut has_multiplier = false;
+    
+    // First pass: check for multiplier and extract it
+    let inner_pairs: Vec<_> = pair.clone().into_inner().collect();
+    for inner_pair in &inner_pairs {
+        if inner_pair.as_rule() == Rule::multiplier {
+            // Parse multiplier: "* unsigned"
+            let mult_str = inner_pair.as_str();
+            if let Some(num_str) = mult_str.split('*').nth(1) {
+                if let Ok(num) = num_str.trim().parse::<u32>() {
+                    multiplier = num.max(1);  // At least 1
+                    has_multiplier = true;
+                }
+            }
+        }
+    }
+    
+    // Parse the actual chord, using the original pair
+    let chord = parse_chord(pair, last_duration, last_octave, mode)?;
+    
+    Ok((chord, if has_multiplier { multiplier } else { 1 }))
 }
 
 fn parse_chord(pair: pest::iterators::Pair<Rule>, 
