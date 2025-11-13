@@ -747,5 +747,252 @@ RH = \relative c'' {
         
         println!("✅ 解析 repeat volta relative octave 成功");
     }
+    
+    #[test]
+    fn test_partial_command() {
+        // Test parsing \partial (pickup measure) command
+        let test_content = r#"\version "2.24.0"
+\score { 
+  \new Staff {
+    \clef treble
+    \key c \major
+    \time 4/4
+    \partial 8
+    g'8 |
+    c''4 d''4 e''4 f''4 |
+  }
+}"#;
+        
+        let result = lilypond_parser::parse_lilypond(test_content);
+        assert!(result.is_ok(), "Failed to parse partial command: {:?}", result);
+        
+        let parsed = result.unwrap();
+        
+        // Should have parsed the partial value
+        assert_eq!(parsed.partial, Some("8".to_string()), "Partial should be '8'");
+        
+        // Should have notes
+        let total_notes = parsed.staves.iter().map(|s| s.base.notes.len()).sum::<usize>();
+        assert!(total_notes > 0, "Should have parsed some notes");
+        
+        println!("✅ 解析 \\partial 命令成功");
+    }
+    
+    #[test]
+    fn test_partial_in_for_elise() {
+        // Test parsing For_Elise.ly which uses \partial 8
+        let test_content = r#"\version "2.22.0"
+\language "deutsch"
+
+\score { 
+  \new Staff {
+    \clef treble
+    \key a \minor
+    \time 3/8
+    \partial 8
+    e'16 ( dis' e' dis' e' h' d' c' a'8 )
+  }
+}"#;
+        
+        let result = lilypond_parser::parse_lilypond(test_content);
+        assert!(result.is_ok(), "Failed to parse For_Elise partial: {:?}", result);
+        
+        let parsed = result.unwrap();
+        
+        // Should have parsed the partial value
+        assert_eq!(parsed.partial, Some("8".to_string()), "Partial should be '8'");
+        
+        // Should have parsed the language as "deutsch"
+        assert_eq!(parsed.language, Some("deutsch".to_string()), "Language should be 'deutsch'");
+        
+        // Should have notes
+        let total_notes = parsed.staves.iter().map(|s| s.base.notes.len()).sum::<usize>();
+        assert!(total_notes > 0, "Should have parsed some notes");
+        
+        println!("✅ 解析 For_Elise 中的 \\partial 命令成功");
+    }
+    
+    #[test]
+    fn test_rest_octave_calculation() {
+        // Test that octave calculation after rest is correct in relative mode
+        // In relative mode, rest should NOT update last_octave/last_pitch
+        // The note after rest should be relative to the note BEFORE the rest
+        let test_content = r#"\version "2.24.0"
+
+RH = \relative c'' {
+  c4 d e f |
+  r4 g a b |
+  c4 r4 d e |
+}
+
+\score { 
+  \new Staff {
+    \RH
+  }
+}"#;
+        
+        let result = lilypond_parser::parse_lilypond(test_content);
+        assert!(result.is_ok(), "Failed to parse relative mode with rests: {:?}", result);
+        
+        let parsed = result.unwrap();
+        println!("✅ 解析 relative 模式下的休止符成功");
+        
+        let first_staff = &parsed.staves[0];
+        let notes: Vec<_> = first_staff.base.notes.iter().filter(|n| n.pitch != "r").collect();
+        
+        println!("Parsed notes:");
+        for (i, note) in notes.iter().enumerate() {
+            println!("  Note {}: pitch={}, octave={}", i, note.pitch, note.octave);
+        }
+        
+        // First measure: c'' d'' e'' f''
+        assert_eq!(notes[0].pitch, "c");
+        assert_eq!(notes[0].octave, 5, "c'' should be octave 5");
+        assert_eq!(notes[1].pitch, "d");
+        assert_eq!(notes[1].octave, 5, "d'' should be octave 5");
+        assert_eq!(notes[2].pitch, "e");
+        assert_eq!(notes[2].octave, 5, "e'' should be octave 5");
+        assert_eq!(notes[3].pitch, "f");
+        assert_eq!(notes[3].octave, 5, "f'' should be octave 5");
+        
+        // Second measure after rest: g a b (should be relative to f'', not rest)
+        assert_eq!(notes[4].pitch, "g");
+        assert_eq!(notes[4].octave, 5, "g after rest should be g'' (octave 5), relative to previous f''");
+        assert_eq!(notes[5].pitch, "a");
+        assert_eq!(notes[5].octave, 5, "a should be a'' (octave 5)");
+        assert_eq!(notes[6].pitch, "b");
+        assert_eq!(notes[6].octave, 5, "b should be b'' (octave 5)");
+        
+        // Third measure: c should be c''', relative to b''
+        assert_eq!(notes[7].pitch, "c");
+        assert_eq!(notes[7].octave, 6, "c after b'' should be c''' (octave 6)");
+        // After rest in middle of measure, d should be relative to c''' (before rest)
+        assert_eq!(notes[8].pitch, "d");
+        assert_eq!(notes[8].octave, 6, "d after rest should be d''' (octave 6), relative to previous c'''");
+        assert_eq!(notes[9].pitch, "e");
+        assert_eq!(notes[9].octave, 6, "e should be e''' (octave 6)");
+    }
+    
+    #[test]
+    fn test_for_elise_rest_octave() {
+        // Test the specific pattern from For_Elise: after a8, rest, then c
+        // Pattern: ... c a8 ) r16 c ( e a ...
+        // The 'c' after rest should be relative to the last note before rest (a)
+        let test_content = r#"\version "2.22.0"
+\language "deutsch"
+
+RH = \relative c'' {
+  e16 dis e dis e h d c a8
+  r16 c e a h8
+}
+
+\score {
+  \new Staff {
+    \RH
+  }
+}"#;
+        
+        let result = lilypond_parser::parse_lilypond(test_content);
+        assert!(result.is_ok(), "Failed to parse For_Elise pattern: {:?}", result);
+        
+        let parsed = result.unwrap();
+        let first_staff = &parsed.staves[0];
+        let notes: Vec<_> = first_staff.base.notes.iter().filter(|n| n.pitch != "r").collect();
+        
+        println!("For_Elise pattern notes:");
+        for (i, note) in notes.iter().enumerate() {
+            println!("  Note {}: pitch={}, octave={}", i, note.pitch, note.octave);
+        }
+        
+        // Find the 'a' note (index 8: e dis e dis e h d c a)
+        assert_eq!(notes[8].pitch, "a");
+        let a_octave = notes[8].octave;
+        println!("Last note before rest: a at octave {}", a_octave);
+        
+        // Find the 'c' note after rest (index 9)
+        assert_eq!(notes[9].pitch, "c");
+        let c_octave = notes[9].octave;
+        println!("First note after rest: c at octave {}", c_octave);
+        
+        // In relative mode, 'c' after 'a' should be the closest c
+        // a is at octave 4, the closest c is c5 (upward, minor 3rd = 3 semitones)
+        // Going down from a4 to c4 would be a major 6th (9 semitones), which is > 4th
+        // So the parser correctly chooses c5 (upward)
+        assert_eq!(c_octave, a_octave + 1, 
+            "c after rest should be c5 (one octave up from a4), as it's the closest c to a4 (minor 3rd upward)");
+    }
+    
+    #[test]
+    fn test_octave_after_explicit_octave_change() {
+        // Test case from user: c, ( e a b8 ) after rest
+        // The c, means c in lower octave (with comma)
+        // Then e a b should be relative to that c
+        let test_content = r#"\version "2.22.0"
+
+RH = \relative c'' {
+  \repeat volta 2 {
+    e16 ( dis e dis e b d c a8 )
+    r16 c, ( e a b8 ) r16 e
+  }
+}
+
+\score {
+  \new Staff {
+    \RH
+  }
+}
+"#;
+        
+        let result = lilypond_parser::parse_lilypond(test_content);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result);
+        
+        let parsed = result.unwrap();
+        let first_staff = &parsed.staves[0];
+        let notes: Vec<_> = first_staff.base.notes.iter().filter(|n| n.pitch != "r").collect();
+        
+        println!("\n=== Test octave after explicit octave change ===");
+        for (i, note) in notes.iter().enumerate() {
+            println!("  Note {}: pitch={}, octave={}", i, note.pitch, note.octave);
+        }
+        
+        // Find the 'a' note before rest (last note of first phrase)
+        // Sequence: e dis e dis e b d c a (9 notes before rest)
+        assert_eq!(notes[8].pitch, "a");
+        let a_before_rest_octave = notes[8].octave;
+        println!("'a' before rest is at octave {}", a_before_rest_octave);
+        
+        // After rest: c, ( e a b8 )
+        // c, means go down one octave from the reference (a)
+        assert_eq!(notes[9].pitch, "c");
+        let c_after_rest_octave = notes[9].octave;
+        println!("'c,' after rest is at octave {}", c_after_rest_octave);
+        
+        // c, should be lower than a
+        // From a4, c, should be c4 (one octave down from c5)
+        assert_eq!(c_after_rest_octave, a_before_rest_octave, 
+            "c, after a should be in same octave as a (c is below a, so it goes to c in same octave)");
+        
+        // Then e a b should be relative to c,
+        assert_eq!(notes[10].pitch, "e");
+        let e_octave = notes[10].octave;
+        println!("'e' after c, is at octave {}", e_octave);
+        // e is above c, within a 4th, so same octave
+        assert_eq!(e_octave, c_after_rest_octave, "e after c should be in same octave");
+        
+        assert_eq!(notes[11].pitch, "a");
+        let a_octave = notes[11].octave;
+        println!("'a' after e is at octave {}", a_octave);
+        // a is above e, within a 4th, so same octave
+        assert_eq!(a_octave, e_octave, "a after e should be in same octave");
+        
+        assert_eq!(notes[12].pitch, "b");
+        let b_octave = notes[12].octave;
+        println!("'b' after a is at octave {}", b_octave);
+        // b is above a, within a 4th, so same octave
+        assert_eq!(b_octave, a_octave, "b after a should be in same octave");
+    }
+
+
+
 }
 

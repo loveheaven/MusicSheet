@@ -10,7 +10,7 @@
 /**
  * Note type classification
  */
-export type NoteType = 'Default' | 'Clef' | 'Chord' | 'Time' | 'Key' | 'Ottava' | 'Rest';
+export type NoteType = 'Default' | 'Clef' | 'Chord' | 'Time' | 'Key' | 'Ottava' | 'Rest' | 'Grace' | 'RepeatStart' | 'RepeatEnd' | 'AlternativeStart' | 'AlternativeEnd';
 
 /**
  * LilyPond note representation
@@ -30,6 +30,7 @@ export interface LilyPondNote {
   note_type?: NoteType;  // Type of note: Default, Clef, Chord, Time
   group_start?: boolean;  // True if this note starts a slur group
   group_end?: boolean;  // True if this note ends a slur group
+  alternative_index?: number[];  // Alternative index (for alternative endings)
 }
 
 /**
@@ -37,6 +38,13 @@ export interface LilyPondNote {
  */
 export interface Lyric {
   text_nodes: string[];
+}
+
+/**
+ * Measure containing note indices
+ */
+export interface Measure {
+  notes: number[];
 }
 
 /**
@@ -49,6 +57,7 @@ export interface VoiceData {
     notes: LilyPondNote[];
   };
   lyrics: Lyric[];
+  measures?: Measure[];
 }
 
 /**
@@ -57,9 +66,11 @@ export interface VoiceData {
 export interface Staff {
   name?: string;
   clef?: string;
+  time_signature?: string;  // Time signature (e.g., "4/4", "3/8")
   notes?: LilyPondNote[];
   voices?: VoiceData[];
   lyrics?: any[];
+  measures?: Measure[];
 }
 
 /**
@@ -71,6 +82,7 @@ export interface ParsedMusic {
   tempo?: string;
   key_signature?: string;
   time_signature?: string;
+  partial?: string;  // Pickup measure duration (e.g., "8", "4", "16")
   staves?: Staff[];
 }
 
@@ -212,7 +224,8 @@ export const shouldShowAccidental = (pitch: string, keySignature: string): strin
       return null;
     }
     // Otherwise, show sharp
-    return '#';}
+    return '#';
+  }
   
   // If the note has a flat in LilyPond
   if (hasFlat) {

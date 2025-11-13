@@ -365,11 +365,11 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
       
       // Play multiple staves simultaneously
       const synthPromises = staves!.map(async (staff, staffIndex) => {
-        // Check if staff has voices or notes
+        // Check if staff has voices or measures
         const hasVoices = staff.voices && staff.voices.length > 0;
-        const hasNotes = staff.notes && staff.notes.length > 0;
+        const hasMeasures = staff.measures && staff.measures.length > 0;
         
-        if (!hasVoices && !hasNotes) return null;
+        if (!hasVoices && !hasMeasures) return null;
         const synth = await createSynthForStaff(staffIndex);
         return { staff, staffIndex, synth };
       });
@@ -381,15 +381,18 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
         const { staff, staffIndex, synth } = staffData;
         const staffVolume = staffVolumes.get(staffIndex) ?? true;
 
-        // Check if staff has voices or notes
+        // Check if staff has voices or measures
         const hasVoices = staff.voices && staff.voices.length > 0;
-        const hasNotes = staff.notes && staff.notes.length > 0;
+        const hasMeasures = staff.measures && staff.measures.length > 0;
 
         if (hasVoices) {
           // Play all voices in this staff simultaneously
           staff.voices!.forEach((voice) => {
             let transportTime = 0;
-            voice.base.notes.forEach((note) => {
+            // Iterate through all notes in all measures using indices to fetch actual notes
+            const measureIndices = voice.measures?.flatMap(measure => measure.notes) || [];
+            const allNotes = measureIndices.map(idx => voice.base.notes[idx]).filter(note => note !== undefined);
+            allNotes.forEach((note) => {
               // Skip non-playable notes
               if (isNonPlayableNote(note)) {
                 return;
@@ -411,10 +414,12 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
 
             totalDuration = Math.max(totalDuration, transportTime);
           });
-        } else if (hasNotes) {
-          // Play notes from staff.notes (backward compatibility)
+        } else if (hasMeasures) {
+          // Play notes from staff.measures using indices to fetch actual notes
           let transportTime = 0;
-          staff.notes!.forEach((note) => {
+          const measureIndices = staff.measures.flatMap(measure => measure.notes);
+          const allNotes = measureIndices.map(idx => staff.notes![idx]).filter(note => note !== undefined);
+          allNotes.forEach((note) => {
             // Skip non-playable notes
             if (isNonPlayableNote(note)) {
               return;
@@ -529,11 +534,11 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
 
       // Process all staves
       staves!.forEach((staff, staffIndex) => {
-        // Check if staff has voices or notes
+        // Check if staff has voices or measures
         const hasVoices = staff.voices && staff.voices.length > 0;
-        const hasNotes = staff.notes && staff.notes.length > 0;
+        const hasMeasures = staff.measures && staff.measures.length > 0;
         
-        if (!hasVoices && !hasNotes) return;
+        if (!hasVoices && !hasMeasures) return;
 
         const staffVolume = staffVolumes.get(staffIndex) ?? true;
 
@@ -553,7 +558,10 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
             }
 
             let currentTime = 0;
-            voice.base.notes.forEach((note) => {
+            // Iterate through all notes in all measures using indices to fetch actual notes
+            const measureIndices = voice.measures?.flatMap(measure => measure.notes) || [];
+            const allNotes = measureIndices.map(idx => voice.base.notes[idx]).filter(note => note !== undefined);
+            allNotes.forEach((note) => {
               // Skip non-playable metadata notes (Clef, Time, Key, etc.)
               if (isNonPlayableNote(note)) {
                 return;
@@ -601,8 +609,8 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
               currentTime += duration;
             });
           });
-        } else if (hasNotes) {
-          // Process staff.notes (backward compatibility)
+        } else if (hasMeasures) {
+          // Process staff.measures
           // Create a new track for each staff
           const track = midi.addTrack();
           
@@ -612,7 +620,9 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
           }
 
           let currentTime = 0;
-          staff.notes!.forEach((note) => {
+          const measureIndices = staff.measures.flatMap(measure => measure.notes);
+          const allNotes = measureIndices.map(idx => staff.notes![idx]).filter(note => note !== undefined);
+          allNotes.forEach((note) => {
             // Skip non-playable metadata notes (Clef, Time, Key, etc.)
             if (isNonPlayableNote(note)) {
               return;
@@ -718,22 +728,26 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
       
         // Play multiple staves simultaneously
         const synthPromises = staves!.map(async (staff, staffIndex) => {
-          // Check if staff has voices or notes
+          // Check if staff has voices or measures
           const hasVoices = staff.voices && staff.voices.length > 0;
-          const hasNotes = staff.notes && staff.notes.length > 0;
+          const hasMeasures = staff.measures && staff.measures.length > 0;
           
-          if (!hasVoices && !hasNotes) return null;
+          if (!hasVoices && !hasMeasures) return null;
           
           // Find the first real note (not Clef or Time marker)
           let firstRealNoteIndex = 0;
           if (hasVoices) {
-            // For voices, find first real note in first voice
+            // For voices, find first real note in first voice using indices
             const firstVoice = staff.voices![0];
-            firstRealNoteIndex = firstVoice.base.notes.findIndex(
+            const measureIndices = firstVoice.measures?.flatMap(measure => measure.notes) || [];
+            const allNotes = measureIndices.map(idx => firstVoice.base.notes[idx]).filter(note => note !== undefined);
+            firstRealNoteIndex = allNotes.findIndex(
               note => !isNonPlayableNote(note)
             );
-          } else if (hasNotes) {
-            firstRealNoteIndex = staff.notes!.findIndex(
+          } else if (hasMeasures) {
+            const measureIndices = staff.measures.flatMap(measure => measure.notes);
+            const allNotes = measureIndices.map(idx => staff.notes![idx]).filter(note => note !== undefined);
+            firstRealNoteIndex = allNotes.findIndex(
               note => !isNonPlayableNote(note)
             );
           }
@@ -749,16 +763,19 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
           const { staff, staffIndex, synth } = staffData;
           const staffVolume = staffVolumes.get(staffIndex) ?? true;
 
-          // Check if staff has voices or notes
+          // Check if staff has voices or measures
           const hasVoices = staff.voices && staff.voices.length > 0;
-          const hasNotes = staff.notes && staff.notes.length > 0;
+          const hasMeasures = staff.measures && staff.measures.length > 0;
 
           if (hasVoices) {
             // Play all voices in this staff simultaneously
             let maxVoiceDuration = 0;
             staff.voices!.forEach((voice, voiceIdx) => {
               let transportTime = 0;
-              voice.base.notes.forEach((note, noteIdx) => {
+              // Iterate through all notes in all measures using indices
+              const measureIndices = voice.measures?.flatMap(measure => measure.notes) || [];
+              const allNotes = measureIndices.map(idx => voice.base.notes[idx]).filter(note => note !== undefined);
+              allNotes.forEach((note, noteIdx) => {
                 const noteDuration = getDurationInSeconds(note.duration, note.dots);
                 
                 // Skip non-playable notes (but still update time for UI sync)
@@ -797,10 +814,12 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
               });
               maxVoiceDuration = Math.max(maxVoiceDuration, transportTime);
             });
-          } else if (hasNotes) {
-            // Play notes from staff.notes (backward compatibility)
+          } else if (hasMeasures) {
+            // Play notes from staff.measures using indices
             let transportTime = 0;
-            staff.notes!.forEach((note, noteIndex) => {
+            const measureIndices = staff.measures.flatMap(measure => measure.notes);
+            const allNotes = measureIndices.map(idx => staff.notes![idx]).filter(note => note !== undefined);
+            allNotes.forEach((note, noteIndex) => {
               const noteDuration = getDurationInSeconds(note.duration, note.dots);
               
               // Skip non-playable notes (but still update time for UI sync)
@@ -843,17 +862,21 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
           if (staff.voices && staff.voices.length > 0) {
             // For multi-voice staves, get max duration across all voices
             const staffMaxDuration = Math.max(
-              ...staff.voices.map(voice =>
-                voice.base.notes.reduce((sum, note) => {
+              ...staff.voices.map(voice => {
+                const measureIndices = voice.measures?.flatMap(measure => measure.notes) || [];
+                const allNotes = measureIndices.map(idx => voice.base.notes[idx]).filter(note => note !== undefined);
+                return allNotes.reduce((sum, note) => {
                   if (isNonPlayableNote(note)) return sum;
                   return sum + getDurationInSeconds(note.duration, note.dots);
-                }, 0)
-              )
+                }, 0);
+              })
             );
             maxDuration = Math.max(maxDuration, staffMaxDuration);
-          } else if (staff.notes) {
-            // For single-note staves
-            const staffDuration = staff.notes.reduce((sum, note) => {
+          } else if (staff.measures) {
+            // For single-measure staves using indices
+            const measureIndices = staff.measures.flatMap(measure => measure.notes);
+            const allNotes = measureIndices.map(idx => staff.notes![idx]).filter(note => note !== undefined);
+            const staffDuration = allNotes.reduce((sum, note) => {
               if (isNonPlayableNote(note)) return sum;
               return sum + getDurationInSeconds(note.duration, note.dots);
             }, 0);
@@ -874,11 +897,15 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
               
               if (staff.voices && staff.voices.length > 0) {
                 const firstVoice = staff.voices[0];
-                firstRealNoteIndex = firstVoice.base.notes.findIndex(
+                const measureIndices = firstVoice.measures?.flatMap(measure => measure.notes) || [];
+                const allNotes = measureIndices.map(idx => firstVoice.base.notes[idx]).filter(note => note !== undefined);
+                firstRealNoteIndex = allNotes.findIndex(
                   note => note.note_type !== 'Clef' && note.note_type !== 'Time' && note.note_type !== 'Key'
                 );
-              } else if (staff.notes && staff.notes.length > 0) {
-                firstRealNoteIndex = staff.notes.findIndex(
+              } else if (staff.measures && staff.measures.length > 0) {
+                const measureIndices = staff.measures.flatMap(measure => measure.notes);
+                const allNotes = measureIndices.map(idx => staff.notes![idx]).filter(note => note !== undefined);
+                firstRealNoteIndex = allNotes.findIndex(
                   note => note.note_type !== 'Clef' && note.note_type !== 'Time' && note.note_type !== 'Key'
                 );
               }
@@ -943,12 +970,14 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
           if (staff.voices && staff.voices.length > 0) {
             // For voices, find first real note in first voice
             const firstVoice = staff.voices[0];
-            firstRealNoteIndex = firstVoice.base.notes.findIndex(
+            const allNotes = firstVoice.measures?.flatMap(measure => measure.notes) || [];
+            firstRealNoteIndex = allNotes.findIndex(
               note => !isNonPlayableNote(note)
             );
-          } else if (staff.notes && staff.notes.length > 0) {
-            // For regular notes
-            firstRealNoteIndex = staff.notes.findIndex(
+          } else if (staff.measures && staff.measures.length > 0) {
+            // For regular measures
+            const allNotes = staff.measures.flatMap(measure => measure.notes);
+            firstRealNoteIndex = allNotes.findIndex(
               note => !isNonPlayableNote(note)
             );
           }

@@ -144,7 +144,7 @@ RH=  \relative c'' {
   }
   \alternative {
     { a8 ) r16 h ( c d ) }
-    { a8\repeatTie r16 <e-1 c'-5>-"." ( <f-1 c'-5>-"." <e-1 g-2 c-5>-"." ) }
+    { a8\repeatTie r16 <e-1 c'-5>-. ( <f-1 c'-5>-. <e-1 g-2 c-5>-. ) }
   }
 
   \grace { f16-1 ( a-2 } c4-3 f16.-4 e32-3
@@ -189,17 +189,18 @@ RH=  \relative c'' {
   r16 c, ( e a
   h8 ) r16 e, ( c' h
   a8 ) r r |%59
-  <e-1 g-2 b-3 cis-5>4.-">" |%60
-  <f-1 a-2 d-5>4-">" <cis'-2 e-4>16 <d-3 f-5> |%61
+  <e-1 g-2 b-3 cis-5>4.-> |%60
+  <f-1 a-2 d-5>4-> <cis'-2 e-4>16 <d-3 f-5> |%61
   <gis,-1 d'-3 f-5>4 <gis-1 d'-3 f-5>8|%62
   <a-1 c!-3 e-5>4.|%63
   <f-1 d'-5>4( <e-1 c'-5>16 <d-1 h'-5> |%64
   <c-1 fis-3 a-5>4) <c-1 a'-5>8 |%65
   <c a'>8( <e c'> <d h'> |%66
   <c a'>4.)
-  <e g b cis>4.-">"
-  <f a d>4-">" <cis' e>16 <d f>
-  <d f>4 q8 q4.
+  <e g b cis>4.-> |%68
+  <f a d>4-> <cis' e>16 <d f>
+  <d f>4 q8 | %70
+  q4. |%71
   <g, es'>4( <f d'>16 <es c'>
   <d f b>4) <d f a>8 <d f gis>4 <d f gis>8
   <c e! a>4 r8 <e h'>8 r r
@@ -237,6 +238,7 @@ RH=  \relative c'' {
 LH =  \relative c {
   \clef bass
   \key c \major
+  \time 3/8
   \partial 8
   \set fingeringOrientations = #'(left) %% für Akkorde!
   \mergeDifferentlyHeadedOn
@@ -265,7 +267,7 @@ LH =  \relative c {
     c,16 g' c r
     r8 g,16 g' h r
     r8
-    a,16 e' a r r8 e,16-"." e' ( e' ) r r
+    a,16 e' a r r8 e,16-. e' ( e' ) r r
     \clef treble e16_ ( e') 
     r r dis e r r16 dis e r r8 R4.
     \clef bass a,,,16 e' a r16
@@ -321,12 +323,12 @@ LH =  \relative c {
   e,16 e' gis r r8 a,16 e' a r r8 R4. a,16 e' a r r8
   e,16 e' gis r r8
 
-  \repeat unfold 5 { a,16-3-"." ( a-2-"." a-1-"." a-3-"." a-2-"." a-1-".") }
-  <a d,>-"."( <a d,>-"." <a d,>-"." <a d,>-"." <a d,>-"." <a d,>-".") |%64
-  <a dis,>-"."( q-"." q-"." q-"." q-"." q-".") |%65
-  <e a>-"."( <e a>-"." <e a>-"." <e a>-"." <e gis>-"." <e gis>-".")|%66
-  <a a,> a-"."( a-"." a-"." a-"." a-".")  |%67
-  \repeat unfold 3 { a-"."( a-"." a-"." a-"." a-"." a-".") }
+  \repeat unfold 5 { a,16-3-. ( a-2-. a-1-. a-3-. a-2-. a-1-.) }
+  <a d,>-.( <a d,>-. <a d,>-. <a d,>-. <a d,>-. <a d,>-.) |%64
+  <a dis,>-.( q-. q-. q-. q-. q-.) |%65
+  <e a>-.( <e a>-. <e a>-. <e a>-. <e gis>-. <e gis>-.)|%66
+  <a a,> a-.( a-. a-. a-. a-.)  |%67
+  \repeat unfold 3 { a-.( a-. a-. a-. a-. a-.) }
   \repeat unfold 18 {b}
   h! h h h h h |%74
   c4 r8 |%75

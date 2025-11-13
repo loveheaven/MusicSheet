@@ -217,14 +217,16 @@ crescendo_start = { "\\" ~ "<" }
 decrescendo_start = { "\\" ~ ">" }
 dynamic_stop = { "\\" ~ "!" }
 
-// Repeat commands
-repeat_type = @{ "volta" | "unfold" | "percent" | "tremolo" }
-repeat_times = @{ digit+ }
-repeat_volta = { "\\repeat" ~ repeat_type ~ repeat_times ~ "{" ~ basic_music_sequence ~ "}" ~ alternative_block? }
-
 // Alternative block for repeats
 alternative_block = { "\\alternative" ~ "{" ~ alternative_choice* ~ "}" }
 alternative_choice = { "{" ~ basic_music_sequence ~ "}" }
+
+// Repeat commands
+repeat_type = @{ "volta" | "segno" | "unfold" | "percent" | "tremolo" }
+repeat_times = @{ digit+ }
+repeat_volta = { "\\repeat" ~ repeat_type ~ repeat_times ~ "{" ~ basic_music_sequence ~ "}" ~ alternative_block? }
+
+
 
 // Grace notes (ornaments)
 grace_notes = { "\\grace" ~ "{" ~ basic_music_sequence ~ "}" }

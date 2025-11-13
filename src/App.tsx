@@ -31,6 +31,10 @@ function App() {
     const saved = localStorage.getItem('showJianpu');
     return saved ? JSON.parse(saved) : false;
   });
+  const [showMeasureNumbers, setShowMeasureNumbers] = useState(() => {
+    const saved = localStorage.getItem('showMeasureNumbers');
+    return saved ? JSON.parse(saved) : false;
+  });
   const [tempo, setTempo] = useState(() => {
     const saved = localStorage.getItem('tempo');
     return saved ? parseFloat(saved) : 1.0;
@@ -48,7 +52,13 @@ function App() {
       console.log('Sample content:', sampleContent);
       const parsed = await invoke<ParsedMusic>('parse_lilypond_content', { content: sampleContent });
       console.log('Parsed music data:', parsed);
-      const allNotes = parsed?.staves?.flatMap(staff => staff.notes || []) || [];
+      const allNotes = parsed?.staves?.flatMap(staff => {
+        if (staff.voices && staff.voices.length > 0) {
+          return staff.voices.flatMap(voice => voice.measures?.flatMap(measure => measure.notes) || []);
+        } else {
+          return staff.measures?.flatMap(measure => measure.notes) || [];
+        }
+      }) || [];
       console.log('Number of notes:', allNotes.length);
       setMusicData(parsed);
       
@@ -60,15 +70,17 @@ function App() {
           if (staff.voices && staff.voices.length > 0) {
             // For multi-voice staves, find first real note in first voice
             const firstVoice = staff.voices[0];
-            const firstRealNoteIndex = firstVoice.base.notes.findIndex(
+            const allNotes = firstVoice.measures?.flatMap(measure => measure.notes) || [];
+            const firstRealNoteIndex = allNotes.findIndex(
               note => note.note_type !== 'Clef' && note.note_type !== 'Time'
             );
             if (firstRealNoteIndex !== -1) {
               initialIndices.set(staffIndex, firstRealNoteIndex);
             }
-          } else if (staff.notes && staff.notes.length > 0) {
-            // Find the first note that is not a Clef or Time marker
-            const firstRealNoteIndex = staff.notes.findIndex(
+          } else if (staff.measures && staff.measures.length > 0) {
+            // For single-voice staff, find first real note in measures
+            const allNotes = staff.measures.flatMap(measure => measure.notes);
+            const firstRealNoteIndex = allNotes.findIndex(
               note => note.note_type !== 'Clef' && note.note_type !== 'Time'
             );
             if (firstRealNoteIndex !== -1) {
@@ -121,15 +133,17 @@ function App() {
             if (staff.voices && staff.voices.length > 0) {
               // For multi-voice staves, find first real note in first voice
               const firstVoice = staff.voices[0];
-              const firstRealNoteIndex = firstVoice.base.notes.findIndex(
+              const allNotes = firstVoice.measures?.flatMap(measure => measure.notes) || [];
+              const firstRealNoteIndex = allNotes.findIndex(
                 note => note.note_type !== 'Clef' && note.note_type !== 'Time'
               );
               if (firstRealNoteIndex !== -1) {
                 initialIndices.set(staffIndex, firstRealNoteIndex);
               }
-            } else if (staff.notes && staff.notes.length > 0) {
-              // Find the first note that is not a Clef or Time marker
-              const firstRealNoteIndex = staff.notes.findIndex(
+            } else if (staff.measures && staff.measures.length > 0) {
+              // For single-voice staff, find first real note in measures
+              const allNotes = staff.measures.flatMap(measure => measure.notes);
+              const firstRealNoteIndex = allNotes.findIndex(
                 note => note.note_type !== 'Clef' && note.note_type !== 'Time'
               );
               if (firstRealNoteIndex !== -1) {
@@ -256,6 +270,11 @@ function App() {
   useEffect(() => {
     localStorage.setItem('showJianpu', JSON.stringify(showJianpu));
   }, [showJianpu]);
+
+  // Save showMeasureNumbers to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('showMeasureNumbers', JSON.stringify(showMeasureNumbers));
+  }, [showMeasureNumbers]);
 
   // Save tempo to localStorage whenever it changes
   useEffect(() => {
@@ -442,6 +461,17 @@ function App() {
                   <span className="jianpu-switch-slider"></span>
                 </button>
               </div>
+              <div className="jianpu-toggle-control">
+                <label htmlFor="showMeasureNumbers">显示小节号:</label>
+                <button
+                  id="showMeasureNumbers"
+                  onClick={() => setShowMeasureNumbers(!showMeasureNumbers)}
+                  className={`jianpu-switch ${showMeasureNumbers ? 'jianpu-on' : 'jianpu-off'}`}
+                  title={showMeasureNumbers ? '小节号已开启' : '小节号已关闭'}
+                >
+                  <span className="jianpu-switch-slider"></span>
+                </button>
+              </div>
             </div>
 
             <div className="notation-container">
@@ -450,6 +480,7 @@ function App() {
                 currentNoteIndices={currentNoteIndices}
                 measuresPerRow={measuresPerRow}
                 showJianpu={showJianpu}
+                showMeasureNumbers={showMeasureNumbers}
               />
             </div>
 

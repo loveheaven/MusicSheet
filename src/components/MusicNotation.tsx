@@ -1,16 +1,17 @@
 import React, { useEffect, useRef } from 'react';
-import { Renderer, Stave, StaveNote, Voice, Formatter, Accidental, Flow, StaveConnector, Beam, Dot, Curve, TextBracket } from 'vexflow';
+import { Renderer, Stave, StaveNote, Voice, Formatter, Accidental, Flow, StaveConnector, Beam, Dot, Curve, TextBracket, GraceNote, Volta, Barline, ClefNote } from 'vexflow';
 import { durationMap, pitchMap, jianpuMap, vexFlowDurationMap, shouldShowAccidental } from '../utils/musicMaps';
-import type { LilyPondNote, Lyric, VoiceData, Staff, ParsedMusic } from '../utils/musicMaps';
+import type { LilyPondNote, Lyric, VoiceData, Staff, ParsedMusic, Measure } from '../utils/musicMaps';
 
 interface MusicNotationProps {
   musicData: ParsedMusic;
   currentNoteIndices: Map<number, number>;
   measuresPerRow?: number;
   showJianpu?: boolean;
+  showMeasureNumbers?: boolean;
 }
 
-const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteIndices, measuresPerRow = 1, showJianpu = false }) => {
+const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteIndices, measuresPerRow = 1, showJianpu = false, showMeasureNumbers = false }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [leftMargin, setLeftMargin] = React.useState(20);
   const [rightMargin, setRightMargin] = React.useState(20);
@@ -128,6 +129,42 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
       currentY += waveHeight * 2;
     }
     ctx.stroke();
+  };
+
+  const drawMultiMeasureRest = (staveNote: any, ctx: any, stave: any, duration: string) => {
+    // Draw a multi-measure rest symbol
+    // This consists of a thick horizontal line in the middle of the staff
+    // with the number of measures above it
+    
+    // Calculate the center of the measure
+    // Use stave's X position and width to find the center
+    const staveX = stave.getX();
+    const staveWidth = stave.getWidth();
+    const centerX = staveX + staveWidth / 2;
+    
+    const staveY = stave.getYForLine(2); // Middle line of the staff
+    const width = 15; // Width of the rest symbol
+    
+    // Draw thick horizontal line
+    ctx.save();
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 6;
+    ctx.lineCap = 'square';
+    ctx.beginPath();
+    ctx.moveTo(centerX - width / 2, staveY);
+    ctx.lineTo(centerX + width / 2, staveY);
+    ctx.stroke();
+    
+    // // Draw vertical lines at both ends (optional, for style)
+    // ctx.lineWidth = 2;
+    // ctx.beginPath();
+    // ctx.moveTo(centerX - width / 2, staveY - 8);
+    // ctx.lineTo(centerX - width / 2, staveY + 8);
+    // ctx.moveTo(centerX + width / 2, staveY - 8);
+    // ctx.lineTo(centerX + width / 2, staveY + 8);
+    // ctx.stroke();
+    
+   
   };
   /**
    * Convert VexFlow note to Jianpu (simplified notation) information
@@ -462,6 +499,42 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
         measureStave.addTimeSignature(musicData.time_signature);
       }
     }
+
+    const hasRepeatStart = flattenedNotes.find((note: any) => note._isRepeatStart);
+    if (hasRepeatStart) {
+      // Start of repeat: left repeat sign (repeat begin barline)
+      try {
+        measureStave.setBegBarType(Barline.type.REPEAT_BEGIN);
+      } catch (e) {
+        // Silently fail
+      }
+    }
+    
+    const hasAlternativeEnd = flattenedNotes.find((note: any) => note._isAlternativeEnd);
+    if (hasAlternativeEnd) {
+      // Start of repeat: left repeat sign (repeat begin barline)
+      try {
+        measureStave.setEndBarType(Barline.type.REPEAT_END);
+      } catch (e) {
+        // Silently fail
+      }
+    }
+
+    const alternativeStartNote = flattenedNotes.find((note: any) => note._isAlternative);
+    var alternativeIndex: number[] | undefined;
+    if(alternativeStartNote) alternativeIndex = alternativeStartNote._alternativeIndex;
+    if (alternativeIndex && alternativeIndex.length > 0) {
+      const altIdx = alternativeIndex[0]; // Get first alternative index (1-based)
+      const voltaText = `${altIdx}`;
+      
+      try {
+        // Set volta bracket
+        measureStave.setVoltaType(Volta.type.BEGIN, voltaText, 0);
+      } catch (e) {
+        // Silently fail
+      }
+    }
+
     
     measureStave.setContext(context).draw();
     return { stave: measureStave, clefToDisplay, timeSignatureToDisplay };
@@ -480,17 +553,14 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     note: LilyPondNote,
     clef: string,
     noteIndex: number,
-    staffIndex: number,
-    keySignature: string = 'C'
+    staffIndex: number
   ): any => {
-    // Check if this is a clef marker
+    // Check if this is a clef marker - use ClefNote to render it
     if (note.note_type === 'Clef' && note.clef) {
-
-      return {
-        _isClefMarker: true,
-        _clefType: note.clef,
-        getTicks: () => ({ value: () => 0 })
-      };
+      const clefNote = new ClefNote(note.clef);
+      (clefNote as any)._isClefMarker = true;
+      (clefNote as any)._clefType = note.clef;
+      return clefNote;
     }
 
     // Check if this is a time signature marker
@@ -522,6 +592,41 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
       } as any;
     }
 
+    // Handle repeat start marker
+    if (note.note_type === 'RepeatStart') {
+      return {
+        _isRepeatStart: true,
+        getTicks: () => ({ value: () => 0 })
+      };
+    }
+
+    // Handle repeat end marker
+    if (note.note_type === 'RepeatEnd') {
+      return {
+        _isRepeatEnd: true,
+        getTicks: () => ({ value: () => 0 })
+      };
+    }
+
+    // Handle alternative marker
+    if (note.note_type === 'AlternativeStart') {
+      return {
+        _isAlternative: true,
+        _alternativeIndex: note.alternative_index,
+        getTicks: () => ({ value: () => 0 })
+      };
+    }
+
+    if (note.note_type === 'AlternativeEnd') {
+      return {
+        _isAlternativeEnd: true,
+        getTicks: () => ({ value: () => 0 })
+      };
+    }
+
+    // Check if this is a grace note
+    const isGraceNote = note.note_type === 'Grace';
+
     let staveNote: any;
     const noteClef = note.clef;
     
@@ -548,11 +653,11 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
       // Add dots
       addDotsToNote(staveNote, note.dots, keys.length);
       
-      // Add accidentals for all notes in the chord
-      addAccidentalIfNeeded(staveNote, note.pitch, keySignature, 0);
-      note.chord_notes.forEach(([chordPitch, _chordOctave], i) => {
-        addAccidentalIfNeeded(staveNote, chordPitch, keySignature, i + 1);
-      });
+      // Store pitch and octave info for later accidental processing
+      // Accidentals will be added later when processing measures
+      (staveNote as any)._lilypondPitch = note.pitch;
+      (staveNote as any)._lilypondOctave = note.octave;
+      (staveNote as any)._lilypondChordNotes = note.chord_notes;
 
       // Add arpeggio marking if present
       if (note.arpeggio) {
@@ -564,7 +669,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
       const parts = vexNote.split('/');
       
       if (parts[0] === 'r') {
-        // Create a rest
+        // Create a regular rest
         let duration = parts[1];
         if (note.dots && note.dots.length > 0) {
           duration += 'd'.repeat(note.dots.length);
@@ -586,6 +691,27 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
         });
         
         addDotsToNote(staveNote, note.dots);
+      } else if (parts[0] === 'R') {
+        // Create a multi-measure rest (uppercase R)
+        // Use whole rest as base, but mark it for special rendering
+        const restKeys: { [key: string]: string } = {
+          'bass': 'd/3',
+          'alto': 'c/4',
+          'tenor': 'a/3'
+        };
+        const restKey = restKeys[clef] || 'b/4'; // Default for treble clef
+        
+        // Use whole rest 'w' for multi-measure rest display
+        staveNote = new StaveNote({
+          clef: clef,
+          keys: [restKey],
+          duration: 'wr', // Whole rest
+          type: 'r'
+        });
+        
+        // Mark this as a multi-measure rest for custom rendering
+        (staveNote as any)._isMultiMeasureRest = true;
+        (staveNote as any)._originalDuration = note.duration;
       } else {
         // Create a regular note
         const [pitch, octave, baseDuration] = parts;
@@ -594,16 +720,33 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
           duration += 'd'.repeat(note.dots.length);
         }
         
-        staveNote = new StaveNote({
+        // Determine whether to create a grace note or regular note
+        const NoteClass = isGraceNote ? GraceNote : StaveNote;
+        
+        // For grace notes, use 32nd note duration (don't use the actual duration)
+        // Grace notes should not occupy time in the measure
+        const noteDuration = duration;
+        
+        staveNote = new NoteClass({
           clef: clef,
           keys: [`${pitch}/${octave}`],
-          duration: duration,
+          duration: noteDuration,
           auto_stem: true
         });
 
-        // Add dots and accidentals
-        addDotsToNote(staveNote, note.dots);
-        addAccidentalIfNeeded(staveNote, note.pitch, keySignature, 0);
+        // Add dots only for non-grace notes
+        if (!isGraceNote) {
+          addDotsToNote(staveNote, note.dots);
+        }
+        
+        // Store pitch and octave info for later accidental processing
+        (staveNote as any)._lilypondPitch = note.pitch;
+        (staveNote as any)._lilypondOctave = note.octave;
+        
+        // Mark grace notes for later attachment to the following note
+        if (isGraceNote) {
+          (staveNote as any)._isGraceNote = true;
+        }
       }
     }
 
@@ -637,13 +780,37 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     context: any,
     voice: Voice,
     measureStave: Stave,
-    measureNotes: any[]
+    measureNotes: any[],
+    marginLeft: number = 60
   ) => {
     // Create beams using common function
     const beams = createBeamsForNotes(measureNotes);
     
+    // Hide multi-measure rests before drawing voice
+    // We'll draw them manually later
+    const hiddenNotes: any[] = [];
+    for (let i = 0; i < measureNotes.length; i++) {
+      const note = measureNotes[i];
+      if ((note as any)._isMultiMeasureRest) {
+        // Save original style and make invisible
+        (note as any)._originalStyle = {
+          fillStyle: note.style?.fillStyle,
+          strokeStyle: note.style?.strokeStyle
+        };
+        note.setStyle({ fillStyle: 'transparent', strokeStyle: 'transparent' });
+        hiddenNotes.push(note);
+      }
+    }
+    
     // Draw voice with beamed notes
     voice.draw(context, measureStave);
+    
+    // Restore original styles
+    for (const note of hiddenNotes) {
+      if ((note as any)._originalStyle) {
+        note.setStyle((note as any)._originalStyle);
+      }
+    }
     
     // Draw beams
     beams.forEach((beam) => {
@@ -660,8 +827,17 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
       }
     }
 
+    // Draw multi-measure rests
+    for (let i = 0; i < measureNotes.length; i++) {
+      const note = measureNotes[i];
+      if ((note as any)._isMultiMeasureRest) {
+        const duration = (note as any)._originalDuration || '1';
+        drawMultiMeasureRest(note, context, measureStave, duration);
+      }
+    }
+
     // Draw slurs using common function
-    drawSlursForNotes(context, measureNotes);
+    drawSlursForNotes(context, measureNotes, marginLeft);
   };
 
   /**
@@ -731,7 +907,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
    * @param context - Canvas rendering context
    * @param notes - Array of VexFlow notes to draw slurs for
    */
-  const drawSlursForNotes = (context: any, notes: any[]) => {
+  const drawSlursForNotes = (context: any, notes: any[], marginLeft: number) => {
     const slurs: Curve[] = [];
     let slurStartNote: any = null;
     let slurStartIndex = -1;
@@ -768,6 +944,10 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
           // For each row, we need to draw slurs that extend to staff boundaries
           // This requires custom drawing using lower-level canvas APIs
           notesByRow.forEach((rowNotes, rowIdx) => {
+            // Set consistent style for slur curves
+            context.strokeStyle = '#000000';
+            context.lineWidth = 1.5;
+            
             if (rowIdx === startRow) {
               // First row: from first slur note to end of staff (right edge)
               const firstNote = rowNotes[0];
@@ -777,33 +957,42 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
               const noteToUse = lastNote;
               const boundingBox = noteToUse.getBoundingBox();
               const startX = firstNote.getAbsoluteX();
-              const endX = boundingBox.getX() + boundingBox.getW() + 100; // Extend 100px to the right
+              const endX = boundingBox.getX() + boundingBox.getW() + 50; // Extend to right edge
               const y = boundingBox.getY() - 10;
               
-              // Draw a custom slur curve extending to the right
+              // Draw a custom slur curve extending to the right with more curve
               context.beginPath();
               context.moveTo(startX, y);
-              const cp1x = startX + (endX - startX) * 0.3;
-              const cp1y = y - 10;
-              const cp2x = startX + (endX - startX) * 0.7;
-              const cp2y = y - 10;
+              const cp1x = startX + (endX - startX) * 0.2;
+              const cp1y = y - 30; // More downward curve
+              const cp2x = startX + (endX - startX) * 0.8;
+              const cp2y = y - 30; // More downward curve
               context.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, endX, y);
               context.stroke();
             } else if (rowIdx === endRow) {
               // Last row: from start of staff (left edge) to last slur note
+              const firstNote = rowNotes[0]; // First note in this row
               const lastNote = rowNotes[rowNotes.length - 1];
               const boundingBox = lastNote.getBoundingBox();
-              const startX = boundingBox.getX() - 100; // Extend 100px to the left
+              const firstNoteBBox = firstNote.getBoundingBox();
+              
+              const startX = marginLeft; // Start from the left margin
               const endX = lastNote.getAbsoluteX();
               const y = boundingBox.getY() - 10;
+              
+              // Calculate curve height based on width
+              // Wider curve = more curve depth, narrower = less curve depth
+              const width = endX - startX;
+              const curveDepth = Math.min(30, width * 0.15); // Max 30, scales with width
               
               // Draw a custom slur curve extending from the left
               context.beginPath();
               context.moveTo(startX, y);
-              const cp1x = startX + (endX - startX) * 0.3;
-              const cp1y = y - 10;
-              const cp2x = startX + (endX - startX) * 0.7;
-              const cp2y = y - 10;
+              // Control points weighted more towards the ending note to make curve closer to slur_start
+              const cp1x = startX + (endX - startX) * 0.1;
+              const cp1y = y - curveDepth;
+              const cp2x = startX + (endX - startX) * 0.6;
+              const cp2y = y - curveDepth;
               context.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, endX, y);
               context.stroke();
             } else {
@@ -827,14 +1016,138 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
             }
           });
         } else {
-          // Same-row slur: draw normally
-          const slur = new Curve(slurStartNote, note, {
-            cps: [
-              { x: 0, y: 10 },
-              { x: 0, y: 10 }
-            ]
-          });
-          slurs.push(slur);
+          // Same-row slur: determine stem direction and draw manually to ensure proper positioning
+          // Collect notes between slurStartNote and note (inclusive)
+          const slurNotes = notes.slice(slurStartIndex, i + 1);
+          
+          // Determine average stem direction of notes in the slur
+          // Stem direction: 1 = up, -1 = down
+          let stemDirection = 0;
+          let stemCount = 0;
+          for (const slurNote of slurNotes) {
+            try {
+              // Skip markers and rests
+              if (slurNote._isClefMarker || slurNote._isTimeSignatureMarker || 
+                  slurNote._isKeyMarker || slurNote._isOttavaMarker) {
+                continue;
+              }
+              const isRest = slurNote.duration?.includes('r') || 
+                            slurNote.isRest?.() || 
+                            slurNote.constructor.name === 'StaveRest';
+              if (isRest) continue;
+              
+              const stem = slurNote.getStem?.();
+              if (stem) {
+                const direction = stem.getDirection();
+                stemDirection += direction;
+                stemCount++;
+              }
+            } catch (e) {
+              // Ignore errors
+            }
+          }
+          
+          // Calculate average stem direction
+          const avgStemDirection = stemCount > 0 ? stemDirection / stemCount : 1;
+          
+          // Find the highest/lowest point among all notes in the slur
+          let extremeY = 0;
+          let hasValidY = false;
+          
+          for (const slurNote of slurNotes) {
+            try {
+              // Skip markers and rests
+              if (slurNote._isClefMarker || slurNote._isTimeSignatureMarker || 
+                  slurNote._isKeyMarker || slurNote._isOttavaMarker) {
+                continue;
+              }
+              const isRest = slurNote.duration?.includes('r') || 
+                            slurNote.isRest?.() || 
+                            slurNote.constructor.name === 'StaveRest';
+              if (isRest) continue;
+              
+              const bbox = slurNote.getBoundingBox();
+              if (bbox) {
+                if (!hasValidY) {
+                  extremeY = avgStemDirection > 0 ? bbox.getY() : (bbox.getY() + bbox.getH());
+                  hasValidY = true;
+                } else {
+                  if (avgStemDirection > 0) {
+                    // Stems up: find highest point (minimum Y)
+                    extremeY = Math.min(extremeY, bbox.getY());
+                  } else {
+                    // Stems down: find lowest point (maximum Y)
+                    extremeY = Math.max(extremeY, bbox.getY() + bbox.getH());
+                  }
+                }
+              }
+            } catch (e) {
+              // Ignore errors
+            }
+          }
+          
+          // Draw custom slur curve that stays above/below all notes
+          try {
+            const startX = slurStartNote.getAbsoluteX();
+            const endX = note.getAbsoluteX();
+            const spanX = endX - startX;
+            
+            // Get start and end note Y positions for better curve fitting
+            const startBBox = slurStartNote.getBoundingBox();
+            const endBBox = note.getBoundingBox();
+            
+            // Calculate base Y positions for start and end points
+            let startY, endY;
+            if (avgStemDirection > 0) {
+              // Stems up: slur above notes
+              startY = startBBox.getY() - 8; // Closer to start note
+              endY = endBBox.getY() - 8; // Closer to end note
+            } else {
+              // Stems down: slur below notes
+              startY = startBBox.getY() + startBBox.getH() + 8;
+              endY = endBBox.getY() + endBBox.getH() + 8;
+            }
+            
+            // Calculate the middle Y position (peak of the curve)
+            // Should be further away to create a nice arc
+            let midY;
+            if (avgStemDirection > 0) {
+              // Stems up: peak should be higher (lower Y value)
+              midY = hasValidY ? extremeY - 25 : Math.min(startY, endY) - 25;
+            } else {
+              // Stems down: peak should be lower (higher Y value)
+              midY = hasValidY ? extremeY + 25 : Math.max(startY, endY) + 25;
+            }
+            
+            // Draw bezier curve with control points that create a nice arc
+            context.save();
+            context.strokeStyle = '#000000';
+            context.lineWidth = 1.5;
+            context.beginPath();
+            context.moveTo(startX, startY);
+            
+            // Control points positioned to create a smooth, curved arc
+            // First control point: close to start, pulling toward the peak
+            const cp1x = startX + spanX * 0.15;
+            const cp1y = startY + (midY - startY) * 0.7;
+            
+            // Second control point: close to end, pulling toward the peak
+            const cp2x = startX + spanX * 0.85;
+            const cp2y = endY + (midY - endY) * 0.7;
+            
+            context.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, endX, endY);
+            context.stroke();
+            context.restore();
+          } catch (e) {
+            // Fallback to VexFlow Curve
+            const slur = new Curve(slurStartNote, note, {
+              cps: [
+                { x: 0, y: avgStemDirection > 0 ? -25 : 25 },
+                { x: 0, y: avgStemDirection > 0 ? -25 : 25 }
+              ]
+            });
+            slurs.push(slur);
+          }
         }
         slurStartNote = null;
         slurStartIndex = -1;
@@ -913,7 +1226,6 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
         
         textBracket.setContext(context).draw();
       } catch (e) {
-        console.error('Error drawing ottava bracket:', e);
         return;
       }
     });
@@ -1091,28 +1403,77 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
   };
 
   /**
-   * Add accidental modifier to a note if needed based on key signature
+   * Add accidental modifier to a note if needed based on key signature and measure context
    * @param staveNote - VexFlow StaveNote object
    * @param pitch - LilyPond pitch (e.g., 'bes', 'fis', 'c', 'b')
    * @param keySignature - Key signature string (e.g., 'F', 'G', 'Bb', 'D')
    * @param noteIndex - Index of the note in the chord (0 for single note or chord base)
+   * @param measureAccidentals - Map tracking accidentals used in current measure (e.g., {'c4': '#'})
+   * @param octave - Octave of the note
    */
-  const addAccidentalIfNeeded = (staveNote: any, pitch: string, keySignature: string, noteIndex: number): void => {
+  const addAccidentalIfNeeded = (
+    staveNote: any, 
+    pitch: string, 
+    keySignature: string, 
+    noteIndex: number,
+    measureAccidentals?: Map<string, string>,
+    octave?: number
+  ): void => {
+    // Create a unique key for this pitch+octave combination in the measure
+    const pitchKey = octave !== undefined ? `${pitch.charAt(0)}${octave}` : pitch.charAt(0);
+    
+    // Check if this pitch was already altered in the current measure
+    if (measureAccidentals && measureAccidentals.has(pitchKey)) {
+      const measureAccidental = measureAccidentals.get(pitchKey);
+      const currentAccidental = pitch.includes('is') ? '#' : pitch.includes('es') ? 'b' : 'n';
+      
+      // If the accidental matches what was already set in the measure, don't show it again
+      if (measureAccidental === currentAccidental) {
+        return;
+      }
+      // If different, show the new accidental and update the measure state
+      if (currentAccidental === '#') {
+        staveNote.addModifier(new Accidental('#'), noteIndex);
+        measureAccidentals.set(pitchKey, '#');
+      } else if (currentAccidental === 'b') {
+        staveNote.addModifier(new Accidental('b'), noteIndex);
+        measureAccidentals.set(pitchKey, 'b');
+      } else {
+        staveNote.addModifier(new Accidental('n'), noteIndex);
+        measureAccidentals.set(pitchKey, 'n');
+      }
+      return;
+    }
+    
+    // First occurrence in measure: check against key signature
     const needsAccidental = shouldShowAccidental(pitch, keySignature);
     if (needsAccidental === '#') {
       staveNote.addModifier(new Accidental('#'), noteIndex);
+      if (measureAccidentals) measureAccidentals.set(pitchKey, '#');
     } else if (needsAccidental === 'b') {
       staveNote.addModifier(new Accidental('b'), noteIndex);
+      if (measureAccidentals) measureAccidentals.set(pitchKey, 'b');
     } else if (needsAccidental === 'n') {
       staveNote.addModifier(new Accidental('n'), noteIndex);
+      if (measureAccidentals) measureAccidentals.set(pitchKey, 'n');
+    } else if (measureAccidentals) {
+      // No accidental shown, but track the natural state from key signature
+      const currentAccidental = pitch.includes('is') ? '#' : pitch.includes('es') ? 'b' : 'n';
+      measureAccidentals.set(pitchKey, currentAccidental);
     }
   };
 
   const convertLilyPondToVexFlow = (note: LilyPondNote): string => {
-    // Handle rest
+    // Handle regular rest
     if (note.pitch === 'r') {
       const duration = durationMap[note.duration] || 'q';
       return `r/${duration}`;
+    }
+
+    // Handle multi-measure rest (uppercase R)
+    if (note.pitch === 'R') {
+      const duration = durationMap[note.duration] || 'q';
+      return `R/${duration}`;
     }
 
     let pitch = pitchMap[note.pitch.charAt(0)] || 'c';
@@ -1158,21 +1519,47 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
       // Render multiple staves in parallel
       renderMultipleStaves(renderer, musicData);
     } catch (error) {
-      console.error('Error rendering music notation:', error);
       const context = renderer.getContext();
       context.fillText('Music notation rendering error', 50, 100);
     }
 
-  }, [musicData, currentNoteIndices, measuresPerRow, containerWidth, leftMargin, rightMargin, lyricFontSize, lyricLineSpacing, showJianpu, pianoStaffSpacing, pianoSystemSpacing]);
+  }, [musicData, currentNoteIndices, measuresPerRow, containerWidth, leftMargin, rightMargin, lyricFontSize, lyricLineSpacing, showJianpu, pianoStaffSpacing, pianoSystemSpacing, showMeasureNumbers]);
 
   const renderMultipleStaves = (renderer: any, musicData: ParsedMusic) => {
     const staves = musicData.staves || [];
     if (staves.length === 0) return;
 
-    const timeSignature = musicData.time_signature || '4/4';
-    const [numBeats, beatValue] = timeSignature.split('/').map(Number);
+    // Get time signature from the first staff (each staff should have its own time_signature)
+    const staffTimeSignature = staves[0]?.time_signature || musicData.time_signature || '4/4';
+    const [numBeats, beatValue] = staffTimeSignature.split('/').map(Number);
+    
     const ticksPerBeat = Flow.durationToTicks(beatValue.toString());
     const ticksPerMeasure = ticksPerBeat * numBeats;
+    
+    
+    // Calculate ticks for partial (pickup measure)
+    // If partial is specified (e.g., "8"), calculate how many ticks the pickup measure should have
+    let firstMeasureTicks = ticksPerMeasure; // Default: full measure
+    if (musicData.partial) {
+      // Parse partial duration (e.g., "8" -> eighth note, "4" -> quarter note, "8." -> dotted eighth)
+      const partialDuration = musicData.partial.replace(/\./g, ''); // Remove dots to get base duration
+      let partialTicks = Flow.durationToTicks(partialDuration);
+      
+      // If original had dots, multiply by 1.5 for each dot
+      const dotCount = (musicData.partial.match(/\./g) || []).length;
+      if (dotCount > 0) {
+        // Each dot adds half of the previous value
+        let multiplier = 1.0;
+        let added = 0.5;
+        for (let i = 0; i < dotCount; i++) {
+          multiplier += added;
+          added /= 2;
+        }
+        partialTicks = Math.floor(partialTicks * multiplier);
+      }
+      
+      firstMeasureTicks = partialTicks; // First measure should only have partial ticks
+    }
 
     // Determine notes to render for each staff
     // If staff has voices, keep them separate; otherwise use staff.notes
@@ -1182,8 +1569,10 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
         return {
           voices: staff.voices.map(voice => ({
             notes: voice.base.notes || [],
-            lyrics: voice.lyrics || []
+            lyrics: voice.lyrics || [],
+            measures: voice.measures || []
           })),
+          measures: staff.measures || [],
           hasVoices: true
         };
       } else {
@@ -1191,8 +1580,10 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
         return {
           voices: [{
             notes: staff.notes || [],
-            lyrics: staff.lyrics || []
+            lyrics: staff.lyrics || [],
+            measures: staff.measures || []
           }],
+          measures: staff.measures || [],
           hasVoices: false
         };
       }
@@ -1203,59 +1594,77 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     const staffVexNotes = staffVoicesData.map((staffData, staffIdx) => 
       staffData.voices.map((voiceData, voiceIdx) =>
         voiceData.notes.map((note, noteIdx) => 
-          createVexFlowNote(note, staves[staffIdx].clef || 'treble', noteIdx, staffIdx, keySignature)
+          createVexFlowNote(note, staves[staffIdx].clef || 'treble', noteIdx, staffIdx)
         )
       )
     );
 
-    // Split each staff's voices' notes into measures
-    const staffMeasures = staffVexNotes.map(staffVoices => 
-      staffVoices.map(voiceNotes => {
-        const measures: any[][] = [];
-        let currentMeasure: any[] = [];
-        let currentTicks = 0;
-
-        for (const note of voiceNotes) {
-        // Check if this is a clef or time signature marker
-        if ((note as any)._isClefMarker || (note as any)._isTimeSignatureMarker || (note as any)._isKeyMarker || (note as any)._isOttavaMarker) {
-          // If current measure is full, start a new measure with the marker
-          if (currentTicks >= ticksPerMeasure && currentMeasure.length > 0) {
-            measures.push([...currentMeasure]);
-            currentMeasure = [note];
-            currentTicks = 0;
-          } else {
-            // Add marker to current measure without counting ticks
-            currentMeasure.push(note);
-          }
-          continue;
-        }
-
-        const noteTicks = note.getTicks().value();
-
-        // Check if adding this note would exceed the measure
-        if (currentTicks + noteTicks > ticksPerMeasure && currentMeasure.length > 0) {
-          // Current measure is full, start a new measure
-          measures.push([...currentMeasure]);
-          currentMeasure = [note];
-          currentTicks = noteTicks;
-        } else if (currentTicks + noteTicks === ticksPerMeasure) {
-          // This note exactly fills the measure
-          currentMeasure.push(note);
-          measures.push([...currentMeasure]);
-          currentMeasure = [];
-          currentTicks = 0;
-        } else {
-          // Add note to current measure
-          currentMeasure.push(note);
-          currentTicks += noteTicks;
-        }
+    // Build measures from backend measure data or fall back to frontend logic
+    const buildMeasuresFromBackend = (
+      staffIdx: number,
+      voiceIdx: number,
+      staffData: any,
+      voiceNotes: any[]
+    ): any[][] => {
+      const measures: any[][] = [];
+      const backendMeasures = staffData.hasVoices 
+        ? staffData.voices[voiceIdx]?.measures 
+        : staffData.measures;
+      
+      if (backendMeasures && backendMeasures.length > 0) {
+        // Use backend measure indices
+        backendMeasures.forEach((measure: Measure) => {
+          const measureNotes: any[] = [];
+          measure.notes.forEach((noteIdx: number) => {
+            if (noteIdx < voiceNotes.length) {
+              measureNotes.push(voiceNotes[noteIdx]);
+            }
+          });
+          // Always push measure, even if empty (markers only)
+          measures.push(measureNotes);
+        });
       }
+      return measures;
+    };
 
-        if (currentMeasure.length > 0) {
-          measures.push(currentMeasure);
+    // Split each staff's voices' notes into measures using backend data
+    const staffMeasures = staffVexNotes.map((staffVoices, staffIdx) => 
+      staffVoices.map((voiceNotes, voiceIdx) => {
+        const backendMeasures = buildMeasuresFromBackend(staffIdx, voiceIdx, staffVoicesData[staffIdx], voiceNotes);
+        
+        if (backendMeasures.length > 0) {
+          // Backend measures exist, use them
+          const measures = backendMeasures;
+          const currentKeySignature = keySignature;
+          
+          // Process each measure to add accidentals based on measure context
+          measures.forEach(measure => {
+            const measureAccidentals = new Map<string, string>();
+            measure.forEach((staveNote: any) => {
+              if (staveNote._isClefMarker || staveNote._isTimeSignatureMarker || staveNote._isKeyMarker || staveNote._isOttavaMarker) {
+                return;
+              }
+              const isRest = staveNote.duration?.includes('r') || staveNote.isRest?.() || staveNote.constructor.name === 'StaveRest';
+              if (isRest) {
+                return;
+              }
+              if (staveNote._lilypondPitch) {
+                const pitch = staveNote._lilypondPitch;
+                const octave = staveNote._lilypondOctave;
+                addAccidentalIfNeeded(staveNote, pitch, currentKeySignature, 0, measureAccidentals, octave);
+                if (staveNote._lilypondChordNotes && staveNote._lilypondChordNotes.length > 0) {
+                  staveNote._lilypondChordNotes.forEach(([chordPitch, chordOctave]: [string, number], i: number) => {
+                    addAccidentalIfNeeded(staveNote, chordPitch, currentKeySignature, i + 1, measureAccidentals, chordOctave);
+                  });
+                }
+              }
+            });
+          });
+          return measures;
         }
-
-        return measures;
+        
+        // Backend must provide measures data
+        return [];
       })
     );
 
@@ -1322,6 +1731,18 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
       const endMeasure = Math.min(startMeasure + measuresPerRow, maxMeasures);
       const rowY = 40 + rowIndex * (totalStaffHeight + systemSpacing); // the start Y position for this row
 
+      // Display measure number at the start of the row if showMeasureNumbers is enabled
+      if (showMeasureNumbers) {
+        context.save();
+        context.font = 'bold 16px Arial';
+        context.fillStyle = '#666666';
+        context.textAlign = 'right';
+        // Measure numbers start from 1
+        const measureNumber = startMeasure + 1;
+        context.fillText(measureNumber.toString(), marginLeft - 20, rowY + 25);
+        context.restore();
+      }
+
       const bottomMeasure: number[] = [];
       // Render each staff in this row
       staves.forEach((staff, staffIndex) => {
@@ -1346,7 +1767,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
             }
           }
 
-          // Create measure stave using common function
+          // Create measure stave using common function,并且画五线谱线
           const { stave: measureStave, clefToDisplay, timeSignatureToDisplay } = createMeasureStave(
             x,
             staffY,
@@ -1354,7 +1775,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
             measureIdx,
             allVoiceNotesForMeasure,
             staves[staffIndex].clef || 'treble',
-            context
+            context    
           );
           rowStaves.push(measureStave);
           bottomMeasure.push(measureStave.getYForLine(4));
@@ -1368,7 +1789,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
             if (measureIdx < voiceMeasures.length && voiceMeasures[measureIdx].length > 0) {
               // Filter out clef markers and time signature markers - they shouldn't be rendered as notes
               const measureNotes = voiceMeasures[measureIdx].filter((note: any) => 
-                !note._isClefMarker && !note._isTimeSignatureMarker && !note._isKeyMarker && !note._isOttavaMarker
+                !note._isClefMarker && !note._isTimeSignatureMarker && !note._isKeyMarker && !note._isOttavaMarker && !note._isRepeatStart && !note._isRepeatEnd && !note._isAlternative && !note._isAlternativeEnd
               );
               
               if (measureNotes.length === 0) {
@@ -1378,18 +1799,53 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
 
               let measureTicks = 0;
               measureNotes.forEach(note => {
-                measureTicks += note.getTicks().value();
+                // Grace notes don't contribute to measure timing
+                if (!((note as any)._isGraceNote)) {
+                  measureTicks += note.getTicks().value();
+                }
               });
 
+              
+              let notesToRender = [...measureNotes];
+             
+
               const actualBeats = measureTicks / ticksPerBeat;
-              const voiceBeats = Math.min(actualBeats, numBeats);
+              // For first measure (pickup), use its actual beat count; for others use full beats or actual, whichever is smaller
+              const voiceBeats = measureIdx === 0 && musicData.partial ? (measureTicks / ticksPerBeat) : Math.min(actualBeats, numBeats);
               const voice = new Voice({
                 num_beats: voiceBeats,
                 beat_value: beatValue
               });
 
               voice.setMode(Voice.Mode.SOFT);
-              voice.addTickables(measureNotes);
+              
+              // Process grace notes: in VexFlow, grace notes are rendered separately
+              // and associated with the following note
+              const processedNotes: any[] = [];
+              const graceNoteBuffer: any[] = [];
+              
+              for (let i = 0; i < notesToRender.length; i++) {
+                const currentNote = notesToRender[i];
+                
+                if ((currentNote as any)._isGraceNote) {
+                  // Collect grace notes
+                  graceNoteBuffer.push(currentNote);
+                } else {
+                  // Add all buffered grace notes first
+                  if (graceNoteBuffer.length > 0) {
+                    processedNotes.push(...graceNoteBuffer);
+                    graceNoteBuffer.length = 0; // Clear the buffer
+                  }
+                  // Then add the regular note
+                  processedNotes.push(currentNote);
+                }
+              }
+              
+              // Add any remaining grace notes that weren't attached (edge case)
+              // These would be trailing grace notes - just add them as regular notes
+              processedNotes.push(...graceNoteBuffer);
+              
+              voice.addTickables(processedNotes);
               voicesToRender.push({ voice, measureNotes, voiceIdx });
               
               // Mark notes with their row index for cross-row slur detection
@@ -1444,13 +1900,17 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
             formatter.joinVoices(allVoices).format(allVoices, formatWidth);
             
             voicesToRender.forEach(({ voice, measureNotes }) => {
--              drawVoiceWithDecorations(context, voice, measureStave, measureNotes);
+-              drawVoiceWithDecorations(context, voice, measureStave, measureNotes, marginLeft);
             });
           }
         }
 
         // Connect staves in the same row
         if (rowStaves.length > 1) {
+          // Set canvas style for connectors
+          context.strokeStyle = '#000000';
+          context.lineWidth = 1;
+          
           for (let i = 0; i < rowStaves.length - 1; i++) {
             const connector = new StaveConnector(rowStaves[i], rowStaves[i + 1]);
             connector.setType(StaveConnector.type.SINGLE);
@@ -1467,6 +1927,10 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
         // Create temporary staves for the brace connector at the leftmost position
         const leftStave = new Stave(marginLeft, firstStaveY, 0);
         const rightStave = new Stave(marginLeft, lastStaveY, 0);
+        
+        // Set canvas style for brace connector
+        context.strokeStyle = '#000000';
+        context.lineWidth = 1;
         
         const connector = new StaveConnector(leftStave, rightStave);
         connector.setType(StaveConnector.type.BRACE);
@@ -1490,7 +1954,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
             const voiceMeasures = staffMeasures[staffIndex][voiceIdx];
             if (measureIdx < voiceMeasures.length) {
               const measureNotes = voiceMeasures[measureIdx].filter((note: any) => 
-                !note._isClefMarker && !note._isTimeSignatureMarker && !note._isKeyMarker && !note._isOttavaMarker
+                !note._isClefMarker && !note._isTimeSignatureMarker && !note._isKeyMarker && !note._isOttavaMarker && !note._isRepeatStart && !note._isRepeatEnd && !note._isAlternative && !note._isAlternativeEnd
               );
               notesInRow.push(...measureNotes);
             }
@@ -1574,7 +2038,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
                     currentOttavaValue = 0;
                   }
                 }
-              } else if (!note._isClefMarker && !note._isTimeSignatureMarker && !note._isKeyMarker) {
+              } else if (!note._isClefMarker && !note._isTimeSignatureMarker && !note._isKeyMarker && !note._isRepeatStart && !note._isRepeatEnd && !note._isAlternative && !note._isAlternativeEnd) {
                 globalNoteIndex++;
               }
             }
@@ -1657,7 +2121,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     // Draw slurs after all notes are rendered (including cross-row slurs)
     allNotesGlobalPerStaffVoice.forEach((allNotes) => {
       if (allNotes.length > 0) {
-        drawSlursForNotes(context, allNotes);
+        drawSlursForNotes(context, allNotes, marginLeft);
       }
     });
     
@@ -1673,7 +2137,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
       notesPerRow.forEach((notes, rowIdx) => {
         notes.forEach(note => {
           // Skip clef markers, time signature markers, and rests                
-          if (!(note._isClefMarker || note._isTimeSignatureMarker || note._isKeyMarker || note._isOttavaMarker)) {
+          if (!(note._isClefMarker || note._isTimeSignatureMarker || note._isKeyMarker || note._isOttavaMarker || note._isRepeatStart || note._isRepeatEnd || note._isAlternative || note._isAlternativeEnd)) {
             allNotes.push(note);
             noteToRowMap.push(rowIdx);
           }
