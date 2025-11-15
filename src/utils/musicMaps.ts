@@ -31,6 +31,7 @@ export interface LilyPondNote {
   group_start?: boolean;  // True if this note starts a slur group
   group_end?: boolean;  // True if this note ends a slur group
   alternative_index?: number[];  // Alternative index (for alternative endings)
+  tuplet_fraction?: string;  // Tuplet fraction (e.g., "3/2" for triplet, "5/4" for quintuplet)
 }
 
 /**

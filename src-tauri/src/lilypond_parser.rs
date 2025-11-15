@@ -66,6 +66,7 @@ pub struct LilyPondNote {
     pub key_sig: Option<String>,  // Key signature (e.g., "C", "G", "F")
     pub ottava: Option<i32>,  // Octave transposition (e.g., 1 for up one octave, -1 for down one octave)
     pub arpeggio: bool,  // True if this note has an arpeggio marking
+    pub repeat_times: Option<u32>,
     #[serde(default)]
     pub note_type: NoteType,  // Type of note: Default, Clef, Chord, Time
     #[serde(default)]
@@ -80,6 +81,8 @@ pub struct LilyPondNote {
     pub accidental_modifier: Option<String>,  // Accidental modifier: "!" (forced) or "?" (cautionary)
     #[serde(default)]
     pub alternative_index: Vec<i32>,  // Alternative index (for alternative endings)
+    #[serde(default)]
+    pub tuplet_fraction: Option<String>,  // Tuplet fraction (e.g., "3/2" for triplet, "5/4" for quintuplet)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1325,6 +1328,7 @@ fn parse_repeat_volta(
                 key_sig: None,
                 ottava: None,
                 arpeggio: false,
+                repeat_times: Some(repeat_times),
                 note_type: NoteType::RepeatStart,
                 group_start: false,
                 group_end: false,
@@ -1332,6 +1336,7 @@ fn parse_repeat_volta(
                 script_attachments: Vec::new(),
                 accidental_modifier: None,
                 alternative_index: Vec::new(),
+                tuplet_fraction: None,
             };
             notes.push(repeat_start_note);
 
@@ -1350,6 +1355,7 @@ fn parse_repeat_volta(
                     key_sig: None,
                     ottava: None,
                     arpeggio: false,
+                    repeat_times: None,
                     note_type: NoteType::AlternativeStart,
                     group_start: false,
                     group_end: false,
@@ -1357,6 +1363,7 @@ fn parse_repeat_volta(
                     script_attachments: Vec::new(),
                     accidental_modifier: None,
                     alternative_index: vec![alt_index as i32 + 1],  // 1-based index
+                    tuplet_fraction: None,
                 };
                 notes.push(alt_note);
                 
@@ -1374,6 +1381,7 @@ fn parse_repeat_volta(
                     key_sig: None,
                     ottava: None,
                     arpeggio: false,
+                    repeat_times: None,
                     note_type: NoteType::AlternativeEnd,
                     group_start: false,
                     group_end: false,
@@ -1381,6 +1389,7 @@ fn parse_repeat_volta(
                     script_attachments: Vec::new(),
                     accidental_modifier: None,
                     alternative_index: Vec::new(),
+                    tuplet_fraction: None,
                 };
                 notes.push(repeat_end_note);
             }
@@ -1398,12 +1407,14 @@ fn parse_repeat_volta(
                     key_sig: None,
                     ottava: None,
                     arpeggio: false,
+                    repeat_times: None,
                     note_type: NoteType::RepeatEnd,
                     group_start: false,
                     group_end: false,
                     has_slur: false,
                     script_attachments: Vec::new(),
                     accidental_modifier: None,
+                    tuplet_fraction: None,
                     alternative_index: Vec::new(),
                 };
                 notes.push(final_repeat_end);
@@ -1485,11 +1496,13 @@ fn parse_basic_music_item(pair: pest::iterators::Pair<Rule>,
                         key_sig: None,
                         ottava: None,
                         arpeggio: false,
+                        repeat_times: None,
                         note_type: NoteType::Clef,
                         group_start: false,
                         group_end: false,
                         has_slur: false,
                         script_attachments: Vec::new(),
+                        tuplet_fraction: None,
                         accidental_modifier: None,
                         alternative_index: Vec::new(),
                     };
@@ -1522,10 +1535,12 @@ fn parse_basic_music_item(pair: pest::iterators::Pair<Rule>,
                         key_sig: None,
                         ottava: None,
                         arpeggio: false,
+                        repeat_times: None,
                         note_type: NoteType::Time,
                         group_start: false,
                         group_end: false,
                         has_slur: false,
+                        tuplet_fraction: None,
                         script_attachments: Vec::new(),
                         accidental_modifier: None,
                         alternative_index: Vec::new(),
@@ -1547,9 +1562,11 @@ fn parse_basic_music_item(pair: pest::iterators::Pair<Rule>,
                         key_sig: parsed.key_signature.clone(),
                         ottava: None,
                         arpeggio: false,
+                        repeat_times: None,
                         note_type: NoteType::Key,
                         group_start: false,
                         group_end: false,
+                        tuplet_fraction: None,
                         has_slur: false,
                         script_attachments: Vec::new(),
                         accidental_modifier: None,
@@ -1585,8 +1602,10 @@ fn parse_basic_music_item(pair: pest::iterators::Pair<Rule>,
                         key_sig: None,
                         ottava: Some(ottava_val),
                         arpeggio: false,
+                        repeat_times: None,
                         note_type: NoteType::Ottava,
                         group_start: false,
+                        tuplet_fraction: None,
                         group_end: false,
                         has_slur: false,
                         script_attachments: Vec::new(),
@@ -1717,18 +1736,31 @@ fn parse_basic_music_item(pair: pest::iterators::Pair<Rule>,
             Rule::tuplet => {
                 // Handle \tuplet fraction { music }
                 // Parse the music sequence inside the tuplet
+                let mut tuplet_fraction: Option<String> = None;
                 for tuplet_part in inner_pair.into_inner() {
                     match tuplet_part.as_rule() {
+                        Rule::tuplet_fraction => {
+                            // Parse the fraction (e.g., "3/2" for triplet)
+                            tuplet_fraction = Some(tuplet_part.as_str().to_string());
+                        },
                         Rule::basic_music_sequence => {
                             for seq_item in tuplet_part.into_inner() {
                                 if seq_item.as_rule() == Rule::basic_music_item {
                                     parse_basic_music_item(seq_item, notes, parsed, last_duration, last_octave, last_pitch, mode)?;
+                                    // Mark all notes added in this tuplet block with the tuplet_fraction
+                                    if let Some(ref fraction) = tuplet_fraction {
+                                        if let Some(last_note) = notes.last_mut() {
+                                            last_note.tuplet_fraction = Some(fraction.clone());
+                                        }
+                                    }
                                 }
                             }
                         },
-                        _ => {} // Ignore tuplet_fraction for now
+                        _ => {}
                     }
                 }
+                
+                
             },
             
             Rule::tuplet_span => {
@@ -1892,10 +1924,29 @@ fn parse_musical_note(pair: pest::iterators::Pair<Rule>,
 
     match mode {
         OctaveMode::Fixed => {
-            // In fixed mode: last_octave + (note.octave - 3)
-            // Because note.octave is relative to middle C (octave 3)
-            octave = *last_octave + (octave - 3);
+            // In fixed mode: all notes without octave marks are in the same octave band as the reference
+            // Notes with octave marks are offset from that band
             
+            if octave_marks.is_empty() {
+                // No explicit octave mark: determine octave based on pitch relative to reference
+                let pitch_class = get_pitch_class(&pitch);
+                let ref_pitch_class = get_pitch_class(last_pitch);
+                
+                // If the note is lower in the octave than the reference, place it in the octave below
+                // Otherwise place it in the same octave as the reference
+                if pitch_class < ref_pitch_class {
+                    octave = *last_octave - 1;
+                } else {
+                    octave = *last_octave;
+                }
+            } else {
+                // Has explicit octave marks: offset from the reference octave
+                // Each ' raises by one, each , lowers by one
+                // Base octave is the reference octave
+                // Then apply the mark offset
+                let base_octave_from_marks = calculate_octave(&octave_marks);  // This returns octave relative to middle C (3)
+                octave = *last_octave + (base_octave_from_marks - 3);
+            }
         },
         OctaveMode::Relative => {            
             octave = calculate_relative_octave(&pitch, octave, last_octave, last_pitch);
@@ -1921,6 +1972,7 @@ fn parse_musical_note(pair: pest::iterators::Pair<Rule>,
         key_sig: None,
         ottava: None,
         arpeggio: false,
+        repeat_times: None,
         note_type: NoteType::Default,
         group_start: has_slur,  // If this note has ~, it starts a slur
         group_end: false,
@@ -1928,6 +1980,7 @@ fn parse_musical_note(pair: pest::iterators::Pair<Rule>,
         script_attachments,  // Store parsed script attachments
         accidental_modifier,  // Store accidental modifier if present
         alternative_index: Vec::new(),
+        tuplet_fraction: None,
     })
 }
 
@@ -1991,6 +2044,7 @@ fn parse_rest(pair: pest::iterators::Pair<Rule>, last_duration: &mut String) -> 
         key_sig: None,
         ottava: None,
         arpeggio: false,
+        repeat_times: None,
         note_type: NoteType::Rest,
         group_start: false,
         group_end: false,
@@ -1998,6 +2052,7 @@ fn parse_rest(pair: pest::iterators::Pair<Rule>, last_duration: &mut String) -> 
         script_attachments: Vec::new(),
         accidental_modifier: None,
         alternative_index: Vec::new(),
+        tuplet_fraction: None,
     })
 }
 
@@ -2058,6 +2113,7 @@ fn parse_multi_measure_rest(pair: pest::iterators::Pair<Rule>, last_duration: &m
         key_sig: None,
         ottava: None,
         arpeggio: false,
+        repeat_times: None,
         note_type: NoteType::Rest,
         group_start: false,
         group_end: false,
@@ -2065,6 +2121,7 @@ fn parse_multi_measure_rest(pair: pest::iterators::Pair<Rule>, last_duration: &m
         script_attachments: Vec::new(),
         accidental_modifier: None,
         alternative_index: Vec::new(),
+        tuplet_fraction: None,
     })
 }
 
@@ -2181,32 +2238,53 @@ fn parse_chord(pair: pest::iterators::Pair<Rule>,
     let mut dots = String::new();
     let mut first_note: Option<LilyPondNote> = None;
     
-    // In LilyPond's relative mode within chords:
-    // - The first note in the chord is relative to the note BEFORE the chord
-    // - Subsequent notes in the chord are relative to the FIRST note in the chord (not each other)
-    // This is different from sequential notes where each note is relative to the previous one.
+    // In LilyPond chords:
+    // - In Fixed mode: all notes are relative to the fixed reference octave (not to previous notes)
+    // - In Relative mode: first note is relative to note BEFORE the chord, subsequent notes are relative to the PREVIOUS note in the chord
     let mut chord_last_octave = *last_octave;
     let mut chord_last_pitch = last_pitch.clone();
+    // For Fixed mode, preserve the original octave reference for all notes in the chord
+    let fixed_mode_reference_octave = if matches!(mode, OctaveMode::Fixed) { *last_octave } else { 0 };
+    let fixed_mode_reference_pitch = if matches!(mode, OctaveMode::Fixed) { last_pitch.clone() } else { String::new() };
     
     for inner_pair in pair.into_inner() {
         match inner_pair.as_rule() {
             Rule::musical_note => {
                 // Parse each note in the chord
-                // For subsequent notes (not the first), they should be relative to the FIRST note
-                // not to the previously parsed note in the chord
-                let note = parse_musical_note(inner_pair, parsed, last_duration, &mut chord_last_octave, &mut chord_last_pitch, mode)?;
+                // In Fixed mode: each note is relative to the fixed reference octave (NOT to the previous note)
+                // In Relative mode: each note is relative to the previous note
+                let mut note_octave_ref = if matches!(mode, OctaveMode::Fixed) {
+                    fixed_mode_reference_octave
+                } else {
+                    chord_last_octave
+                };
+                
+                // In Fixed mode, all notes compare against the reference pitch, not the previous note
+                // Create a mutable reference that we can use and that parse_musical_note can modify
+                let mut note_pitch_ref = if matches!(mode, OctaveMode::Fixed) {
+                    fixed_mode_reference_pitch.clone()
+                } else {
+                    chord_last_pitch.clone()
+                };
+                
+                let note = parse_musical_note(inner_pair, parsed, last_duration, &mut note_octave_ref, &mut note_pitch_ref, mode)?;
                 
                 if first_note.is_none() {
                     // First note becomes the base note
-                    first_note = Some(note);
+                    first_note = Some(note.clone());
+                    // Update for the next chord note
+                    chord_last_octave = note.octave;
+                    chord_last_pitch = note.pitch.clone();
                 } else {
                     // Subsequent notes are added to chord_notes
-                    // Reset to the first note's octave/pitch for relative calculation
-                    if let Some(ref base) = first_note {
-                        chord_last_octave = base.octave;
-                        chord_last_pitch = base.pitch.clone();
+                    chord_notes.push((note.pitch.clone(), note.octave));
+                    // Update for next note (relative to this one in Relative mode, or reset to base for Fixed mode)
+                    if matches!(mode, OctaveMode::Relative) {
+                        // In Relative mode, subsequent notes are relative to the previous note
+                        chord_last_octave = note.octave;
+                        chord_last_pitch = note.pitch.clone();
                     }
-                    chord_notes.push((note.pitch, note.octave));
+                    // In Fixed mode, don't update; all notes use the same reference octave
                 }
             },
             Rule::duration => {
@@ -2234,10 +2312,14 @@ fn parse_chord(pair: pest::iterators::Pair<Rule>,
     }
     
     // After parsing all chord notes, update last_octave and last_pitch
-    // The note following the chord will be relative to the FIRST note in the chord
+    // In Fixed mode: don't update last_octave; all notes use the same fixed reference
+    // In Relative/Absolute mode: The note following the chord will be relative to the FIRST note in the chord
     if let Some(ref base) = first_note {
-        *last_octave = base.octave;
-        *last_pitch = base.pitch.clone();
+        if !matches!(mode, OctaveMode::Fixed) {
+            *last_octave = base.octave;
+            *last_pitch = base.pitch.clone();
+        }
+        // In Fixed mode, keep the original fixed reference octave unchanged
     }
     
     // Use the first note as the base, but mark it as a chord
@@ -2335,6 +2417,27 @@ fn parse_duration(pair: pest::iterators::Pair<Rule>) -> Result<(String, String),
     
     // println!("[DEBUG] parse_duration - Final result: duration={}, dots={}", duration_num, dots);
     Ok((duration_num, dots))
+}
+
+// Get the pitch class value (0 for c, 1 for d, 2 for e, etc.)
+// Used to calculate relative distances between notes
+// Handles both plain notes (c, d, e, etc.) and modified notes (cis, des, fis, etc.)
+fn get_pitch_class(pitch: &str) -> i32 {
+    // Extract the base note (first character)
+    if pitch.is_empty() {
+        return 0;
+    }
+    
+    match pitch.chars().next().unwrap() {
+        'c' => 0,
+        'd' => 1,
+        'e' => 2,
+        'f' => 3,
+        'g' => 4,
+        'a' => 5,
+        'b' => 6,
+        _ => 0,
+    }
 }
 
 fn calculate_octave(octave_marks: &str) -> i32 {
@@ -2817,8 +2920,7 @@ fn organize_notes_into_measures(
     
     for (idx, note) in notes.iter().enumerate() {
         // 跳过没有时值的标记（clef, time, key, ottava 等）
-        if note.note_type == NoteType::Clef 
-            || note.note_type == NoteType::Time 
+        if note.note_type == NoteType::Time 
             || note.note_type == NoteType::Key
             || note.note_type == NoteType::Grace
             || note.note_type == NoteType::Ottava {
@@ -2826,13 +2928,18 @@ fn organize_notes_into_measures(
             current_measure_notes.push(idx as u32);
             continue;
         }
+        if note.note_type == NoteType::Clef {
+            if measures.len() > 0 {
+                current_measure_notes.push(idx as u32);
+            }
+            continue;
+        }
+            
         
         // 处理 RepeatStart 标记
         if note.note_type == NoteType::RepeatStart {
             repeat_start_measure_idx = Some(measures.len());
-            if repeat_start_measure_idx != Some(0) {
-                current_measure_notes.push(idx as u32);
-            }
+            current_measure_notes.push(idx as u32);
             continue;
         }
         
@@ -2937,7 +3044,20 @@ fn organize_notes_into_measures(
         }
         
         // 计算当前音符的时值
-        let note_duration = duration_to_fraction(&note.duration, &note.dots)?;
+        let mut note_duration = duration_to_fraction(&note.duration, &note.dots)?;
+        
+        // 如果音符有 tuplet，则调整其时值
+        if let Some(ref tuplet_frac) = note.tuplet_fraction {
+            // tuplet_fraction 格式为 "n/m"，表示 n 个音符在 m 的时间内演奏
+            // 例如 "3/2" 表示 3 个音符在 2 个的时间内演奏（三联音）
+            let parts: Vec<&str> = tuplet_frac.split('/').collect();
+            if parts.len() == 2 {
+                if let (Ok(n), Ok(m)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>()) {
+                    // 实际时值 = 原始时值 * (m / n)
+                    note_duration = note_duration * (m / n);
+                }
+            }
+        }
         
         // 检查是否需要开始新的小节
         if current_duration + note_duration > current_capacity + 0.001 {
@@ -2988,7 +3108,19 @@ fn calculate_measure_duration(measure: &Measure, notes: &[LilyPondNote]) -> Resu
             continue;
         }
         
-        let note_duration = duration_to_fraction(&note.duration, &note.dots)?;
+        let mut note_duration = duration_to_fraction(&note.duration, &note.dots)?;
+        
+        // 如果音符有 tuplet，则调整其时值
+        if let Some(ref tuplet_frac) = note.tuplet_fraction {
+            let parts: Vec<&str> = tuplet_frac.split('/').collect();
+            if parts.len() == 2 {
+                if let (Ok(n), Ok(m)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>()) {
+                    // 实际时值 = 原始时值 * (m / n)
+                    note_duration = note_duration * (m / n);
+                }
+            }
+        }
+        
         duration += note_duration;
     }
     

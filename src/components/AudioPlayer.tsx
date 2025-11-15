@@ -6,7 +6,191 @@ import type { LilyPondNote, Staff } from '../utils/musicMaps';
 
 // Helper function to check if a note is non-playable (metadata or rest)
 const isNonPlayableNote = (note: LilyPondNote): boolean => {
-  return note.note_type === 'Clef' || note.note_type === 'Time' || note.note_type === 'Key' || note.note_type === 'Ottava';
+  return note.note_type === 'Clef' || note.note_type === 'Time' 
+  || note.note_type === 'RepeatStart' || note.note_type === 'RepeatEnd'
+  || note.note_type === 'AlternativeStart' || note.note_type === 'AlternativeEnd'
+  || note.note_type === 'Key' || note.note_type === 'Ottava';
+};
+
+// Helper function to process notes with repeat volta logic
+const processNotesWithRepeatVolta = (allNotes: LilyPondNote[]): { note: LilyPondNote; transportTime: number; originalIndex: number }[] => {
+  const processedNotes: { note: LilyPondNote; transportTime: number }[] = [];
+  
+  // RepeatContext: tracks state for each repeat block
+  interface RepeatContext {
+    startIndex: number;
+    repeatTimes: number;
+    currentIteration: number;
+    hasAlternatives: boolean;
+    firstAlternativeIdx: number;
+    lastAlternativeIdx: number;
+  }
+  
+  const repeatStack: RepeatContext[] = [];
+  let idx = 0;
+  let transportTime = 0;
+
+  const getDurationInSeconds = (duration: string, dots?: string): number => {
+    const durationToSecondsMap: { [key: string]: number } = {
+      '1': 4, '2': 2, '4': 1, '8': 0.5, '16': 0.25, '32': 0.125, '64': 0.0625,
+    };
+    let baseDuration = durationToSecondsMap[duration] || 0.5;
+    if (dots && dots.length > 0) {
+      let multiplier = 1.0;
+      let addedDuration = baseDuration / 2;
+      for (let i = 0; i < dots.length; i++) {
+        multiplier += addedDuration / baseDuration;
+        addedDuration /= 2;
+      }
+      baseDuration *= multiplier;
+    }
+    return baseDuration;
+  };
+
+  // Helper: find matching RepeatEnd for a RepeatStart
+  const findMatchingRepeatEnd = (startIdx: number): number => {
+    let nestedCount = 0;
+    for (let i = startIdx + 1; i < allNotes.length; i++) {
+      if (allNotes[i].note_type === 'RepeatStart') nestedCount++;
+      if (allNotes[i].note_type === 'RepeatEnd') {
+        if (nestedCount === 0) return i;
+        nestedCount--;
+      }
+    }
+    return -1;
+  };
+
+  // Helper: find first AlternativeStart after a given index
+  const findFirstAlternativeStart = (startIdx: number, repeatEndIdx: number): number => {
+    for (let i = startIdx; i <= repeatEndIdx; i++) {
+      if (allNotes[i].note_type === 'AlternativeStart') return i;
+    }
+    return -1;
+  };
+
+  // Helper: find matching AlternativeEnd for an AlternativeStart
+  const findMatchingAlternativeEnd = (startIdx: number): number => {
+    let nestedCount = 0;
+    for (let i = startIdx + 1; i < allNotes.length; i++) {
+      if (allNotes[i].note_type === 'AlternativeStart') nestedCount++;
+      if (allNotes[i].note_type === 'AlternativeEnd') {
+        if (nestedCount === 0) return i;
+        nestedCount--;
+      }
+    }
+    return -1;
+  };
+
+  while (idx < allNotes.length) {
+    const note = allNotes[idx];
+
+    // Handle RepeatStart
+    if (note.note_type === 'RepeatStart') {
+      const repeatEndIdx = findMatchingRepeatEnd(idx);
+      
+      if (repeatEndIdx !== -1) {
+        const repeatEndNote = allNotes[repeatEndIdx];
+        const repeatTimes = (repeatEndNote as any)?.repeat_times || 2;
+        const firstAltIdx = findFirstAlternativeStart(idx + 1, repeatEndIdx);
+        const hasAlternatives = firstAltIdx !== -1;
+        
+        const context: RepeatContext = {
+          startIndex: idx + 1,
+          repeatTimes,
+          currentIteration: 0,
+          hasAlternatives,
+          firstAlternativeIdx: firstAltIdx,
+          lastAlternativeIdx: repeatEndIdx,
+        };
+        
+        repeatStack.push(context);
+        console.log(`[processNotesWithRepeatVolta] RepeatStart at ${idx}, times=${repeatTimes}, hasAlternatives=${hasAlternatives}`);
+      }
+    }
+
+    // Handle AlternativeStart
+    if (note.note_type === 'AlternativeStart') {
+      const alternativeIndex = (note as any)?.alternative_index || [];
+      const repeatCtx = repeatStack[repeatStack.length - 1];
+      const currentIter = repeatCtx ? repeatCtx.currentIteration : 0;
+
+      // currentIteration is 0-based, alternativeIndex is 1-based
+      // So iteration 0 corresponds to alternativeIndex [1], iteration 1 to [2], etc.
+      const shouldPlay = alternativeIndex.includes(currentIter + 1);
+
+      console.log(`[processNotesWithRepeatVolta] AlternativeStart at ${idx}, alternativeIndex=${alternativeIndex}, currentIter=${currentIter}, shouldPlay=${shouldPlay}`);
+
+      if (!shouldPlay) {
+        // Skip until matching AlternativeEnd
+        const altEndIdx = findMatchingAlternativeEnd(idx);
+        if (altEndIdx !== -1) {
+          idx = altEndIdx;
+        }
+      }
+    }
+
+    // Handle AlternativeEnd
+    if (note.note_type === 'AlternativeEnd') {
+      processedNotes.push({ note, transportTime, originalIndex: idx });
+      
+      const repeatCtx = repeatStack[repeatStack.length - 1];
+      if (repeatCtx) {
+        // Increment iteration counter
+        repeatCtx.currentIteration++;
+        console.log(`[processNotesWithRepeatVolta] AlternativeEnd at ${idx}, newIteration=${repeatCtx.currentIteration}, maxTimes=${repeatCtx.repeatTimes}`);
+        
+        if (repeatCtx.currentIteration < repeatCtx.repeatTimes) {
+          // Jump back to repeat start
+          console.log(`[processNotesWithRepeatVolta] Jumping back to ${repeatCtx.startIndex}`);
+          idx = repeatCtx.startIndex - 1; // -1 because idx++ at end of loop
+        } else {
+          // Repeat finished, pop from stack
+          console.log(`[processNotesWithRepeatVolta] Repeat finished`);
+          repeatStack.pop();
+        }
+      }
+      idx++;
+      continue;
+    }
+
+    // Handle RepeatEnd (only if no alternatives)
+    if (note.note_type === 'RepeatEnd') {
+      processedNotes.push({ note, transportTime, originalIndex: idx });
+      
+      const repeatCtx = repeatStack[repeatStack.length - 1];
+      if (repeatCtx && !repeatCtx.hasAlternatives) {
+        // Increment iteration counter
+        repeatCtx.currentIteration++;
+        console.log(`[processNotesWithRepeatVolta] RepeatEnd at ${idx}, newIteration=${repeatCtx.currentIteration}, maxTimes=${repeatCtx.repeatTimes}`);
+        
+        if (repeatCtx.currentIteration < repeatCtx.repeatTimes) {
+          // Jump back to repeat start
+          console.log(`[processNotesWithRepeatVolta] Jumping back to ${repeatCtx.startIndex}`);
+          idx = repeatCtx.startIndex - 1;
+        } else {
+          // Repeat finished, pop from stack
+          console.log(`[processNotesWithRepeatVolta] Repeat finished`);
+          repeatStack.pop();
+        }
+      }
+      idx++;
+      continue;
+    }
+
+    // Regular note or non-playable marker
+    if (!isNonPlayableNote(note)) {
+      const duration = getDurationInSeconds(note.duration, note.dots);
+      processedNotes.push({ note, transportTime, originalIndex: idx });
+      transportTime += duration;
+    } else {
+      // Non-playable notes still get added with their index for tracking
+      processedNotes.push({ note, transportTime, originalIndex: idx });
+    }
+
+    idx++;
+  }
+
+  return processedNotes;
 };
 
 // Instrument sample mappings - Complete list from tonejs-instruments
@@ -178,8 +362,8 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
   }, [ staves, selectedInstrument, staffInstruments]);
 
   const convertLilyPondToTone = (note: LilyPondNote): string | string[] | null => {
-    // Handle rest
-    if (note.pitch === 'r') {
+    // Handle rest (both regular rest 'r' and multi-measure rest 'R')
+    if (note.pitch === 'r' || note.pitch === 'R') {
       return null;  // Rest has no pitch
     }
 
@@ -388,11 +572,14 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
         if (hasVoices) {
           // Play all voices in this staff simultaneously
           staff.voices!.forEach((voice) => {
-            let transportTime = 0;
             // Iterate through all notes in all measures using indices to fetch actual notes
             const measureIndices = voice.measures?.flatMap(measure => measure.notes) || [];
             const allNotes = measureIndices.map(idx => voice.base.notes[idx]).filter(note => note !== undefined);
-            allNotes.forEach((note) => {
+            
+            // Process notes with repeat volta logic
+            const processedNotes = processNotesWithRepeatVolta(allNotes);
+            
+            processedNotes.forEach(({ note, transportTime }) => {
               // Skip non-playable notes
               if (isNonPlayableNote(note)) {
                 return;
@@ -408,18 +595,26 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
                 }, transportTime);
                 scheduledEventsRef.current.push(noteEventId);
               }
-
-              transportTime += noteDuration;
             });
 
-            totalDuration = Math.max(totalDuration, transportTime);
+            // Calculate total duration after repeat volta processing
+            let voiceDuration = 0;
+            processedNotes.forEach(({ note, transportTime }) => {
+              if (!isNonPlayableNote(note)) {
+                voiceDuration = Math.max(voiceDuration, transportTime + getDurationInSeconds(note.duration, note.dots));
+              }
+            });
+            totalDuration = Math.max(totalDuration, voiceDuration);
           });
         } else if (hasMeasures) {
           // Play notes from staff.measures using indices to fetch actual notes
-          let transportTime = 0;
           const measureIndices = staff.measures.flatMap(measure => measure.notes);
           const allNotes = measureIndices.map(idx => staff.notes![idx]).filter(note => note !== undefined);
-          allNotes.forEach((note) => {
+          
+          // Process notes with repeat volta logic
+          const processedNotes = processNotesWithRepeatVolta(allNotes);
+          
+          processedNotes.forEach(({ note, transportTime }) => {
             // Skip non-playable notes
             if (isNonPlayableNote(note)) {
               return;
@@ -435,11 +630,16 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
               }, transportTime);
               scheduledEventsRef.current.push(noteEventId);
             }
-
-            transportTime += noteDuration;
           });
 
-          totalDuration = Math.max(totalDuration, transportTime);
+          // Calculate total duration after repeat volta processing
+          let staffDuration = 0;
+          processedNotes.forEach(({ note, transportTime }) => {
+            if (!isNonPlayableNote(note)) {
+              staffDuration = Math.max(staffDuration, transportTime + getDurationInSeconds(note.duration, note.dots));
+            }
+          });
+          totalDuration = Math.max(totalDuration, staffDuration);
         }
       });
       
@@ -557,27 +757,26 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
               track.name = voice.base.name;
             }
 
-            let currentTime = 0;
             // Iterate through all notes in all measures using indices to fetch actual notes
             const measureIndices = voice.measures?.flatMap(measure => measure.notes) || [];
             const allNotes = measureIndices.map(idx => voice.base.notes[idx]).filter(note => note !== undefined);
-            allNotes.forEach((note) => {
+            
+            // Process notes with repeat volta logic
+            const processedNotes = processNotesWithRepeatVolta(allNotes);
+            
+            processedNotes.forEach(({ note, transportTime }) => {
               // Skip non-playable metadata notes (Clef, Time, Key, etc.)
               if (isNonPlayableNote(note)) {
                 return;
               }
               
               // Handle rest - advance time but don't add note
-              if (note.pitch === 'r') {
-                const duration = durationToSeconds(note.duration, note.dots);
-                currentTime += duration;
+              if (note.pitch === 'r' || note.pitch === 'R') {
                 return;
               }
 
               // Skip if volume is off
               if (!staffVolume) {
-                const duration = durationToSeconds(note.duration, note.dots);
-                currentTime += duration;
                 return;
               }
 
@@ -590,7 +789,7 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
                   const midiNote = noteNameToMidi(pitch);
                   track.addNote({
                     midi: midiNote,
-                    time: currentTime,
+                    time: transportTime,
                     duration: duration,
                     velocity: 0.8
                   });
@@ -600,13 +799,11 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
                 const midiNote = noteNameToMidi(toneNote);
                 track.addNote({
                   midi: midiNote,
-                  time: currentTime,
+                  time: transportTime,
                   duration: duration,
                   velocity: 0.8
                 });
               }
-
-              currentTime += duration;
             });
           });
         } else if (hasMeasures) {
@@ -619,26 +816,25 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
             track.name = staff.name;
           }
 
-          let currentTime = 0;
           const measureIndices = staff.measures.flatMap(measure => measure.notes);
           const allNotes = measureIndices.map(idx => staff.notes![idx]).filter(note => note !== undefined);
-          allNotes.forEach((note) => {
+          
+          // Process notes with repeat volta logic
+          const processedNotes = processNotesWithRepeatVolta(allNotes);
+          
+          processedNotes.forEach(({ note, transportTime }) => {
             // Skip non-playable metadata notes (Clef, Time, Key, etc.)
             if (isNonPlayableNote(note)) {
               return;
             }
             
             // Handle rest - advance time but don't add note
-            if (note.pitch === 'r') {
-              const duration = durationToSeconds(note.duration, note.dots);
-              currentTime += duration;
+            if (note.pitch === 'r' || note.pitch === 'R') {
               return;
             }
 
             // Skip if volume is off
             if (!staffVolume) {
-              const duration = durationToSeconds(note.duration, note.dots);
-              currentTime += duration;
               return;
             }
 
@@ -651,7 +847,7 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
                 const midiNote = noteNameToMidi(pitch);
                 track.addNote({
                   midi: midiNote,
-                  time: currentTime,
+                  time: transportTime,
                   duration: duration,
                   velocity: 0.8
                 });
@@ -661,13 +857,11 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
               const midiNote = noteNameToMidi(toneNote);
               track.addNote({
                 midi: midiNote,
-                time: currentTime,
+                time: transportTime,
                 duration: duration,
                 velocity: 0.8
               });
             }
-
-            currentTime += duration;
           });
         }
       });
@@ -734,24 +928,28 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
           
           if (!hasVoices && !hasMeasures) return null;
           
-          // Find the first real note (not Clef or Time marker)
-          let firstRealNoteIndex = 0;
+          // Find the first real note (not Clef or Time marker) in complete note list
+          let firstRealNoteIndex = -1;
           if (hasVoices) {
-            // For voices, find first real note in first voice using indices
+            // For voices, find first real note in first voice using complete note list
             const firstVoice = staff.voices![0];
-            const measureIndices = firstVoice.measures?.flatMap(measure => measure.notes) || [];
-            const allNotes = measureIndices.map(idx => firstVoice.base.notes[idx]).filter(note => note !== undefined);
-            firstRealNoteIndex = allNotes.findIndex(
+            const completeNotes = firstVoice.base.notes || [];
+            firstRealNoteIndex = completeNotes.findIndex(
               note => !isNonPlayableNote(note)
             );
           } else if (hasMeasures) {
-            const measureIndices = staff.measures.flatMap(measure => measure.notes);
-            const allNotes = measureIndices.map(idx => staff.notes![idx]).filter(note => note !== undefined);
-            firstRealNoteIndex = allNotes.findIndex(
+            // For regular measures, find first real note in complete note list
+            const completeNotes = staff.notes || [];
+            firstRealNoteIndex = completeNotes.findIndex(
               note => !isNonPlayableNote(note)
             );
           }
-          currentNoteIndicesRef.current.set(staffIndex, firstRealNoteIndex !== -1 ? firstRealNoteIndex : 0);
+          
+          // Set initial highlight to first real note
+          const initialIndex = firstRealNoteIndex !== -1 ? firstRealNoteIndex : 0;
+          currentNoteIndicesRef.current.set(staffIndex, initialIndex);
+          onNoteProgress(staffIndex, initialIndex);
+          
           const synth = await createSynthForStaff(staffIndex);
           return { staff, staffIndex, synth };
         });
@@ -771,17 +969,20 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
             // Play all voices in this staff simultaneously
             let maxVoiceDuration = 0;
             staff.voices!.forEach((voice, voiceIdx) => {
-              let transportTime = 0;
               // Iterate through all notes in all measures using indices
               const measureIndices = voice.measures?.flatMap(measure => measure.notes) || [];
               const allNotes = measureIndices.map(idx => voice.base.notes[idx]).filter(note => note !== undefined);
-              allNotes.forEach((note, noteIdx) => {
+              
+              // Process notes with repeat volta logic
+              const processedNotes = processNotesWithRepeatVolta(allNotes);
+              
+              let maxNoteDuration = 0;
+              processedNotes.forEach(({ note, transportTime, originalIndex }) => {
                 const noteDuration = getDurationInSeconds(note.duration, note.dots);
                 
                 // Skip non-playable notes (but still update time for UI sync)
                 if (isNonPlayableNote(note)) {
                   // Don't play or highlight, but time still advances
-                  // (This keeps UI in sync even with metadata notes)
                   return;
                 }
 
@@ -797,29 +998,33 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
                 }
 
                 // Schedule UI update for the first voice (to show highlight)
+                // Update UI slightly BEFORE the audio starts to avoid visual lag
                 if (voiceIdx === 0) {
                   const uiEventId = Tone.Transport.schedule((time) => {
                     if (!isPlayingRef.current) return;
                     Tone.Draw.schedule(() => {
                       if (isPlayingRef.current) {
-                        currentNoteIndicesRef.current.set(staffIndex, noteIdx);
-                        onNoteProgress(staffIndex, noteIdx);
+                        currentNoteIndicesRef.current.set(staffIndex, originalIndex);
+                        onNoteProgress(staffIndex, originalIndex);
                       }
                     }, time);
-                  }, transportTime);
+                  }, Math.max(0, transportTime - 0.05)); // Update UI 50ms before audio
                   scheduledEventsRef.current.push(uiEventId);
                 }
 
-                transportTime += noteDuration;
+                maxNoteDuration = Math.max(maxNoteDuration, transportTime + noteDuration);
               });
-              maxVoiceDuration = Math.max(maxVoiceDuration, transportTime);
+              maxVoiceDuration = Math.max(maxVoiceDuration, maxNoteDuration);
             });
           } else if (hasMeasures) {
             // Play notes from staff.measures using indices
-            let transportTime = 0;
             const measureIndices = staff.measures.flatMap(measure => measure.notes);
             const allNotes = measureIndices.map(idx => staff.notes![idx]).filter(note => note !== undefined);
-            allNotes.forEach((note, noteIndex) => {
+            
+            // Process notes with repeat volta logic
+            const processedNotes = processNotesWithRepeatVolta(allNotes);
+            
+            processedNotes.forEach(({ note, transportTime, originalIndex }) => {
               const noteDuration = getDurationInSeconds(note.duration, note.dots);
               
               // Skip non-playable notes (but still update time for UI sync)
@@ -840,18 +1045,18 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
               }
 
               // Schedule UI update
+              // Update UI slightly BEFORE the audio starts to avoid visual lag
               const uiEventId = Tone.Transport.schedule((time) => {
                 if (!isPlayingRef.current) return;
                 Tone.Draw.schedule(() => {
                   if (isPlayingRef.current) {
-                    currentNoteIndicesRef.current.set(staffIndex, noteIndex);
-                    onNoteProgress(staffIndex, noteIndex);
+                    currentNoteIndicesRef.current.set(staffIndex, originalIndex);
+                    onNoteProgress(staffIndex, originalIndex);
                   }
                 }, time);
-              }, transportTime);
+              }, Math.max(0, transportTime - 0.05)); // Update UI 50ms before audio
 
               scheduledEventsRef.current.push(uiEventId);
-              transportTime += noteDuration;
             });
           }
         });
@@ -900,13 +1105,13 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
                 const measureIndices = firstVoice.measures?.flatMap(measure => measure.notes) || [];
                 const allNotes = measureIndices.map(idx => firstVoice.base.notes[idx]).filter(note => note !== undefined);
                 firstRealNoteIndex = allNotes.findIndex(
-                  note => note.note_type !== 'Clef' && note.note_type !== 'Time' && note.note_type !== 'Key'
+                  note => !isNonPlayableNote(note)
                 );
               } else if (staff.measures && staff.measures.length > 0) {
                 const measureIndices = staff.measures.flatMap(measure => measure.notes);
                 const allNotes = measureIndices.map(idx => staff.notes![idx]).filter(note => note !== undefined);
                 firstRealNoteIndex = allNotes.findIndex(
-                  note => note.note_type !== 'Clef' && note.note_type !== 'Time' && note.note_type !== 'Key'
+                  note => !isNonPlayableNote(note)
                 );
               }
               
@@ -968,16 +1173,16 @@ const AudioPlayer = forwardRef<any, AudioPlayerProps>(({ staves, onNoteProgress,
           
           // Check if staff has voices
           if (staff.voices && staff.voices.length > 0) {
-            // For voices, find first real note in first voice
+            // For voices, find first real note in first voice using complete note list
             const firstVoice = staff.voices[0];
-            const allNotes = firstVoice.measures?.flatMap(measure => measure.notes) || [];
-            firstRealNoteIndex = allNotes.findIndex(
+            const completeNotes = firstVoice.base.notes || [];
+            firstRealNoteIndex = completeNotes.findIndex(
               note => !isNonPlayableNote(note)
             );
           } else if (staff.measures && staff.measures.length > 0) {
-            // For regular measures
-            const allNotes = staff.measures.flatMap(measure => measure.notes);
-            firstRealNoteIndex = allNotes.findIndex(
+            // For regular measures, find first real note in complete note list
+            const completeNotes = staff.notes || [];
+            firstRealNoteIndex = completeNotes.findIndex(
               note => !isNonPlayableNote(note)
             );
           }

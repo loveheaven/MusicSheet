@@ -70,21 +70,31 @@ function App() {
           if (staff.voices && staff.voices.length > 0) {
             // For multi-voice staves, find first real note in first voice
             const firstVoice = staff.voices[0];
-            const allNotes = firstVoice.measures?.flatMap(measure => measure.notes) || [];
+            // Use ALL notes in base (complete list with all markers)
+            const allNotes = firstVoice.base.notes || [];
             const firstRealNoteIndex = allNotes.findIndex(
-              note => note.note_type !== 'Clef' && note.note_type !== 'Time'
+              note => note.note_type !== 'Clef' && note.note_type !== 'Time' && note.note_type !== 'Key' 
+                   && note.note_type !== 'RepeatStart' && note.note_type !== 'RepeatEnd'
+                   && note.note_type !== 'AlternativeStart' && note.note_type !== 'AlternativeEnd'
             );
             if (firstRealNoteIndex !== -1) {
               initialIndices.set(staffIndex, firstRealNoteIndex);
+            } else {
+              initialIndices.set(staffIndex, 0); // Default to 0 if no real notes found
             }
           } else if (staff.measures && staff.measures.length > 0) {
-            // For single-voice staff, find first real note in measures
-            const allNotes = staff.measures.flatMap(measure => measure.notes);
+            // For single-voice staff, find first real note in all notes
+            // Use ALL notes in staff (complete list with all markers)
+            const allNotes = staff.notes || [];
             const firstRealNoteIndex = allNotes.findIndex(
-              note => note.note_type !== 'Clef' && note.note_type !== 'Time'
+              note => note.note_type !== 'Clef' && note.note_type !== 'Time' && note.note_type !== 'Key'
+                   && note.note_type !== 'RepeatStart' && note.note_type !== 'RepeatEnd'
+                   && note.note_type !== 'AlternativeStart' && note.note_type !== 'AlternativeEnd'
             );
             if (firstRealNoteIndex !== -1) {
               initialIndices.set(staffIndex, firstRealNoteIndex);
+            } else {
+              initialIndices.set(staffIndex, 0); // Default to 0 if no real notes found
             }
           }
         });
@@ -133,21 +143,31 @@ function App() {
             if (staff.voices && staff.voices.length > 0) {
               // For multi-voice staves, find first real note in first voice
               const firstVoice = staff.voices[0];
-              const allNotes = firstVoice.measures?.flatMap(measure => measure.notes) || [];
+              // Use ALL notes in base (complete list with all markers)
+              const allNotes = firstVoice.base.notes || [];
               const firstRealNoteIndex = allNotes.findIndex(
-                note => note.note_type !== 'Clef' && note.note_type !== 'Time'
+                note => note.note_type !== 'Clef' && note.note_type !== 'Time' && note.note_type !== 'Key'
+                     && note.note_type !== 'RepeatStart' && note.note_type !== 'RepeatEnd'
+                     && note.note_type !== 'AlternativeStart' && note.note_type !== 'AlternativeEnd'
               );
               if (firstRealNoteIndex !== -1) {
                 initialIndices.set(staffIndex, firstRealNoteIndex);
+              } else {
+                initialIndices.set(staffIndex, 0); // Default to 0 if no real notes found
               }
             } else if (staff.measures && staff.measures.length > 0) {
-              // For single-voice staff, find first real note in measures
-              const allNotes = staff.measures.flatMap(measure => measure.notes);
+              // For single-voice staff, find first real note in all notes
+              // Use ALL notes in staff (complete list with all markers)
+              const allNotes = staff.notes || [];
               const firstRealNoteIndex = allNotes.findIndex(
-                note => note.note_type !== 'Clef' && note.note_type !== 'Time'
+                note => note.note_type !== 'Clef' && note.note_type !== 'Time' && note.note_type !== 'Key'
+                     && note.note_type !== 'RepeatStart' && note.note_type !== 'RepeatEnd'
+                     && note.note_type !== 'AlternativeStart' && note.note_type !== 'AlternativeEnd'
               );
               if (firstRealNoteIndex !== -1) {
                 initialIndices.set(staffIndex, firstRealNoteIndex);
+              } else {
+                initialIndices.set(staffIndex, 0); // Default to 0 if no real notes found
               }
             }
           });

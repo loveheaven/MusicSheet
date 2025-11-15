@@ -149,8 +149,9 @@ RH=  \relative c'' {
 
   \grace { f16-1 ( a-2 } c4-3 f16.-4 e32-3
   \set Staff.beatStructure = #'(2 1)
-  e8 d)  b'16.-4 a32-3 a16-3(  g f e-3 d c 
-  b8-3 a )  \acciaccatura { b32-3 ( } a32-2 g-1 a-2 b-3 
+  e8 d)  b'16.-4 a32-3 
+  a16-3   (  g f e-3 d c 
+  b8-3 a )  \acciaccatura { b32-3  } (a32-2 g-1 a-2 b-3 
   c4^\markup { \finger \overtie "41" }  ) (d16-2 dis ) | %27
   \set Staff.beatStructure = #'(3)
   e8. e16 ( f a, | %28

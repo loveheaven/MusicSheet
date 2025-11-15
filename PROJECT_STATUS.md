@@ -50,6 +50,18 @@ MusicSheet/
 └── README.md                # Complete documentation
 ```
 
+## 🔄 Recent Updates
+
+### ✅ Frontend-Backend Measure Integration (Latest)
+- **Status**: COMPLETED
+- **Changes**:
+  - Backend now generates measures and sends measure indices to frontend
+  - Frontend removed complex ~300 line measure-splitting logic
+  - Frontend now uses backend measure data directly
+  - Added fallback to frontend logic for backward compatibility
+  - Consistent measure boundaries across the application
+- **Documentation**: See `FRONTEND_BACKEND_INTEGRATION.md`
+
 ## 🚀 Current Status
 
 ### ✅ Development Server
@@ -123,6 +135,7 @@ node test-app.js
 - ✅ Key signatures (`\\key c \\major`)
 - ✅ Time signatures (`\\time 4/4`)
 - ✅ Basic score structure
+- ✅ **NEW: Measure Organization** - Automatic grouping of notes into measures based on time signatures
 
 ## 🔧 Technical Achievements
 
@@ -134,6 +147,13 @@ node test-app.js
 5. **LilyPond Parsing**: Implemented robust regex-based parser
 6. **Audio Synthesis**: Integrated Tone.js with note highlighting
 7. **Music Rendering**: VexFlow integration with proper formatting
+
+### ✅ NEW: Measure Organization System
+- **Automatic Measure Grouping**: Notes are automatically organized into measures based on time signatures
+- **Time Value Calculation**: Accurate duration calculation for all note types with dot support
+- **Partial Measure Support**: Handles pickup measures (partial) correctly
+- **Non-timed Element Filtering**: Properly excludes clef, time signature, key signature, and ottava marks from measure calculation
+- **Flexible Architecture**: Works with both `Staff.notes` and `Voice.notes` patterns
 
 ### ✅ Dependencies Configured
 - All npm packages installed and configured

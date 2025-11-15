@@ -992,6 +992,56 @@ RH = \relative c'' {
         assert_eq!(b_octave, a_octave, "b after a should be in same octave");
     }
 
+    #[test]
+    fn test_chord_octave_calculation_in_relative_mode() {
+        // Test that octave calculation is correct in chords within relative mode
+        // The last note in a chord: <e-1 g-2 c-5> should have c in the correct octave
+        // In \relative c'' { ... <e-1 g-2 c-5> ... }
+        // c'' is octave 5, e is octave 4, g is octave 4, c should be octave 5
+        let test_content = r#"\version "2.22.0"
+
+testChord = \relative c'' { <e-1 g-2 c-5>4 }
+
+\score {
+  \new Staff {
+    \testChord
+  }
+}
+"#;
+        
+        let result = lilypond_parser::parse_lilypond(test_content);
+        assert!(result.is_ok(), "Failed to parse relative chord: {:?}", result);
+        
+        let parsed = result.unwrap();
+        let first_staff = &parsed.staves[0];
+        let chord = &first_staff.base.notes[0];
+        
+        println!("\n=== Test chord octave calculation ===");
+        println!("Chord base note: pitch={}, octave={}", chord.pitch, chord.octave);
+        println!("Chord additional notes: {:?}", chord.chord_notes);
+        
+        // The chord should have 2 additional notes (g and c)
+        assert_eq!(chord.chord_notes.len(), 2, "Chord should have 2 additional notes");
+        
+        // Extract the note octaves
+        let (g_pitch, g_octave) = &chord.chord_notes[0];
+        let (c_pitch, c_octave) = &chord.chord_notes[1];
+        
+        println!("Note 1: pitch={}, octave={}", g_pitch, g_octave);
+        println!("Note 2: pitch={}, octave={}", c_pitch, c_octave);
+        
+        // Verify the octaves
+        // In \relative c'' (octave 5), e is closest to c, so octave 5
+        assert_eq!(chord.pitch, "e", "Base note should be e");
+        assert_eq!(chord.octave, 5, "e should be octave 5 (closest to c'')");
+        
+        assert_eq!(g_pitch, "g", "Second note should be g");
+        assert_eq!(*g_octave, 5, "g should be octave 5 (above e, within fourth, so same octave)");
+        
+        assert_eq!(c_pitch, "c", "Third note should be c");
+        assert_eq!(*c_octave, 6, "c should be octave 6 (above g, is a major 6th, so goes up to next octave)");
+    }
+
 
 
 }

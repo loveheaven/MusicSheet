@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { Renderer, Stave, StaveNote, Voice, Formatter, Accidental, Flow, StaveConnector, Beam, Dot, Curve, TextBracket, GraceNote, Volta, Barline, ClefNote } from 'vexflow';
+import { Renderer, Stave, StaveNote, Voice, Formatter, Accidental, Flow, StaveConnector, Beam, Dot, Curve, TextBracket, GraceNote, Volta, Barline, ClefNote, Tuplet } from 'vexflow';
 import { durationMap, pitchMap, jianpuMap, vexFlowDurationMap, shouldShowAccidental } from '../utils/musicMaps';
 import type { LilyPondNote, Lyric, VoiceData, Staff, ParsedMusic, Measure } from '../utils/musicMaps';
 
@@ -131,7 +131,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     ctx.stroke();
   };
 
-  const drawMultiMeasureRest = (staveNote: any, ctx: any, stave: any, duration: string) => {
+  const drawMultiMeasureRest = (staveNote: any, ctx: any, stave: any, duration: string, isHighlighted: boolean = false) => {
     // Draw a multi-measure rest symbol
     // This consists of a thick horizontal line in the middle of the staff
     // with the number of measures above it
@@ -147,7 +147,8 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     
     // Draw thick horizontal line
     ctx.save();
-    ctx.strokeStyle = '#000000';
+    ctx.strokeStyle = isHighlighted ? '#ff6b6b' : '#000000';
+    ctx.fillStyle = isHighlighted ? '#ff6b6b' : '#000000';
     ctx.lineWidth = 6;
     ctx.lineCap = 'square';
     ctx.beginPath();
@@ -164,7 +165,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     // ctx.lineTo(centerX + width / 2, staveY + 8);
     // ctx.stroke();
     
-   
+    ctx.restore();
   };
   /**
    * Convert VexFlow note to Jianpu (simplified notation) information
@@ -475,7 +476,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     }
     
     // Add clef if needed
-    if (clefToDisplay) {
+    if (clefToDisplay && measureIndex === 0) {
       measureStave.addClef(clefToDisplay);
     }
     
@@ -501,7 +502,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     }
 
     const hasRepeatStart = flattenedNotes.find((note: any) => note._isRepeatStart);
-    if (hasRepeatStart) {
+    if (hasRepeatStart && measureIndex !== 0) {
       // Start of repeat: left repeat sign (repeat begin barline)
       try {
         measureStave.setBegBarType(Barline.type.REPEAT_BEGIN);
@@ -765,6 +766,11 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     (staveNote as any)._lilyPondClef = noteClef;
     (staveNote as any)._groupStart = note.group_start || false;
     (staveNote as any)._groupEnd = note.group_end || false;
+    
+    // Store tuplet fraction info if present
+    if (note.tuplet_fraction) {
+      (staveNote as any)._tupletFraction = note.tuplet_fraction;
+    }
 
     return staveNote;
   };
@@ -832,16 +838,21 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
       const note = measureNotes[i];
       if ((note as any)._isMultiMeasureRest) {
         const duration = (note as any)._originalDuration || '1';
-        drawMultiMeasureRest(note, context, measureStave, duration);
+        // Check if this note has highlight color in its saved original style
+        const isHighlighted = (note as any)._originalStyle?.fillStyle === '#ff6b6b' || (note as any)._originalStyle?.strokeStyle === '#ff6b6b';
+        drawMultiMeasureRest(note, context, measureStave, duration, isHighlighted);
       }
     }
+
+    // Draw tuplets with beam information for accurate direction
+    drawTupletsForNotes(context, measureNotes, beams);
 
     // Draw slurs using common function
     drawSlursForNotes(context, measureNotes, marginLeft);
   };
 
   /**
-   * Create beams for a set of notes based on duration grouping
+   * Create beams for a set of notes based on duration grouping and tuplet_fraction
    * @param notes - Array of VexFlow notes to create beams for
    * @returns Array of Beam objects
    */
@@ -849,11 +860,19 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     const beams: Beam[] = [];
     let currentGroup: any[] = [];
     let lastDuration: string | null = null;
+    let currentTupletFraction: string | null = null;
+    let currentTupletNotesPerGroup = 0;
+    let tupletNoteCount = 0;
+    let lastWasGrace = false; // Track if last note was grace
     const MAX_BEAM_GROUP_SIZE = 4;
     
     for (let i = 0; i < notes.length; i++) {
       const note = notes[i];
       const duration = note.getDuration();
+      const tupletFraction = (note as any)._tupletFraction;
+      
+      // Check if this is a grace note - grace notes should not be beamed with regular notes
+      const isGraceNote = (note as any)._isGraceNote === true || note.constructor.name === 'GraceNote';
       
       // Check if this is a rest note
       const isRest = duration.includes('r') || note.isRest?.() || note.constructor.name === 'StaveRest';
@@ -862,17 +881,95 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
       const baseDuration = duration.replace(/[dr]/g, '');
       const isBeamable = ['8', '16', '32', '64'].includes(baseDuration);
       
-      if (isBeamable && !isRest) {
+      if (isBeamable && !isRest && !isGraceNote) {
+        // Grace note just ended, so we should not connect this note with previous grace notes
+        if (lastWasGrace) {
+          // Finalize any current group
+          if (currentGroup.length >= 2) {
+            beams.push(new Beam(currentGroup, true));
+          }
+          currentGroup = [];
+          lastDuration = null;
+          currentTupletFraction = null;
+          currentTupletNotesPerGroup = 0;
+          tupletNoteCount = 0;
+        }
+        
+        // Check if tuplet fraction changed
+        if (tupletFraction !== currentTupletFraction) {
+          // Finalize current group before switching tuplet
+          if (currentGroup.length >= 2) {
+            beams.push(new Beam(currentGroup, true));
+          }
+          currentGroup = [];
+          lastDuration = null;
+          
+          // Setup new tuplet fraction
+          currentTupletFraction = tupletFraction;
+          if (tupletFraction) {
+            const fractionParts = tupletFraction.split('/');
+            currentTupletNotesPerGroup = parseInt(fractionParts[0], 10);
+            if (isNaN(currentTupletNotesPerGroup)) {
+              currentTupletNotesPerGroup = 0;
+            }
+          } else {
+            currentTupletNotesPerGroup = 0;
+          }
+          tupletNoteCount = 0;
+        }
+        
         // Check if this note has the same duration as the previous one
         if (lastDuration === null || lastDuration === duration) {
           currentGroup.push(note);
           lastDuration = duration;
+          tupletNoteCount++;
           
-          // If group reaches max size, create beam and start new group
-          if (currentGroup.length >= MAX_BEAM_GROUP_SIZE) {
+          // Determine group size based on tuplet or default
+          const groupSize = currentTupletNotesPerGroup > 0 ? currentTupletNotesPerGroup : MAX_BEAM_GROUP_SIZE;
+          
+          // If group reaches target size, create beam and start new group
+          if (currentGroup.length >= groupSize) {
             if (currentGroup.length >= 2) {
               beams.push(new Beam(currentGroup, true));
             }
+            currentGroup = [];
+            tupletNoteCount = 0;
+          }
+        } else {
+          // Duration changed, end current group and start new one
+          if (currentGroup.length >= 2) {
+            beams.push(new Beam(currentGroup, true));
+          }
+          currentGroup = [note];
+          lastDuration = duration;
+          tupletNoteCount = 1;
+        }
+        
+        lastWasGrace = false;
+      } else if (isGraceNote && isBeamable && !isRest) {
+        // Grace notes can be beamed together with other grace notes
+        // But they form a separate beam group from regular notes
+        
+        // If we were building a regular note group, finalize it
+        if (!lastWasGrace && currentGroup.length > 0) {
+          if (currentGroup.length >= 2) {
+            beams.push(new Beam(currentGroup, true));
+          }
+          currentGroup = [];
+          lastDuration = null;
+          currentTupletFraction = null;
+          currentTupletNotesPerGroup = 0;
+          tupletNoteCount = 0;
+        }
+        
+        // Now handle grace note beaming (grace notes can beam with other grace notes)
+        if (lastDuration === null || lastDuration === duration) {
+          currentGroup.push(note);
+          lastDuration = duration;
+          
+          // Grace notes typically beam in pairs or small groups
+          if (currentGroup.length >= 2) {
+            beams.push(new Beam(currentGroup, true));
             currentGroup = [];
             lastDuration = null;
           }
@@ -884,13 +981,17 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
           currentGroup = [note];
           lastDuration = duration;
         }
+        
+        lastWasGrace = true;
       } else {
-        // Not beamable or is a rest, end current group
+        // Not beamable, is a rest, or is a grace note - end current group
         if (currentGroup.length >= 2) {
           beams.push(new Beam(currentGroup, true));
         }
         currentGroup = [];
         lastDuration = null;
+        tupletNoteCount = 0;
+        lastWasGrace = false;
       }
     }
     
@@ -900,6 +1001,179 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     }
     
     return beams;
+  };
+
+  /**
+   * Determine beam direction based on actual stem direction of notes
+   * Returns -1 for down, 1 for up
+   */
+  const determineBeamDirection = (notesInGroup: any[]): number => {
+    if (notesInGroup.length === 0) return -1;
+    
+    // Try to get the actual stem direction from the notes
+    // Check the first note's stem direction if available
+    for (const note of notesInGroup) {
+      const stemDirection = note.getStemDirection?.();
+      if (stemDirection !== undefined && stemDirection !== 0) {
+        return stemDirection;
+      }
+    }
+    
+    // Fallback: Calculate based on note positions (average line number)
+    // In VexFlow, lines are numbered from bottom (0) to top (8)
+    let totalKeyNumber = 0;
+    let validNoteCount = 0;
+    
+    for (const note of notesInGroup) {
+      const keys = note.getKeys?.();
+      if (keys && keys.length > 0) {
+        // Parse the key (format like "c/4" or "d/5")
+        const keyStr = keys[0];
+        const parts = keyStr.split('/');
+        if (parts.length === 2) {
+          const octave = parseInt(parts[1], 10);
+          totalKeyNumber += octave;
+          validNoteCount++;
+        }
+      }
+    }
+    
+    if (validNoteCount > 0) {
+      const avgOctave = totalKeyNumber / validNoteCount;
+      // Use octave 5 as the middle point
+      // Octave > 5 means higher notes, should stem down
+      // Octave < 5 means lower notes, should stem up
+      return avgOctave >= 5 ? -1 : 1;
+    }
+    
+    return -1;
+  };
+
+  /**
+   * Draw tuplets for a set of notes that have tuplet_fraction information
+   * @param context - Canvas rendering context
+   * @param notes - Array of VexFlow notes to draw tuplets for
+   */
+  const drawTupletsForNotes = (context: any, notes: any[], beams: Beam[] = []) => {
+    const tuplets: Tuplet[] = [];
+    let currentTupletNotes: any[] = [];
+    let currentTupletFraction: string | null = null;
+    let notesPerGroup = 0; // Number of notes in each tuplet group
+
+    // Helper function to determine tuplet direction from associated beams
+    const determineTupletDirectionFromBeams = (tupletNotes: any[]): number => {
+      if (tupletNotes.length === 0) return -1;
+      
+      // Check if any of these notes belong to a beam
+      for (const beam of beams) {
+        const beamNotes = (beam as any).notes || [];
+        // Check if all tuplet notes are in this beam
+        const tupletNotesSet = new Set(tupletNotes);
+        let allNotesInBeam = true;
+        
+        for (const beamNote of beamNotes) {
+          if (!tupletNotesSet.has(beamNote)) {
+            allNotesInBeam = false;
+            break;
+          }
+        }
+        
+        // If this beam contains some of our tuplet notes, use its direction
+        if (allNotesInBeam && beamNotes.length > 0) {
+          const beamDirection = (beam as any).getStemDirection?.();
+          if (beamDirection !== undefined && beamDirection !== 0) {
+            return beamDirection;
+          }
+        }
+      }
+      
+      // Fallback to note-based detection
+      return determineBeamDirection(tupletNotes);
+    };
+
+    // Helper function to create and configure a tuplet with proper direction
+    const createAndDrawTuplet = (tupletNotes: any[], fraction: string) => {
+      if (tupletNotes.length === 0) return;
+      
+      try {
+        // Determine direction using beam information first
+        const tupletDirection = determineTupletDirectionFromBeams(tupletNotes);
+        const tupletLocation = tupletDirection === -1 ? 
+          (Tuplet as any).LOCATION_BOTTOM : 
+          (Tuplet as any).LOCATION_TOP;
+        
+        const tuplet = new Tuplet(tupletNotes, {
+          location: tupletLocation
+        });
+        
+        // Parse tuplet_fraction format: "n/m" where n notes occupy m beats
+        const fractionParts = fraction.split('/');
+        if (fractionParts.length === 2) {
+          const notesCount = parseInt(fractionParts[0], 10);
+          if (!isNaN(notesCount)) {
+            tuplet.setNotesOccupied(notesCount);
+          }
+        }
+        
+        tuplet.setContext(context).draw();
+        tuplets.push(tuplet);
+      } catch (e) {
+        // Ignore errors in tuplet creation
+      }
+    };
+
+    for (let i = 0; i < notes.length; i++) {
+      const note = notes[i];
+      const tupletFraction = (note as any)._tupletFraction;
+
+      // If this note has a tuplet fraction
+      if (tupletFraction) {
+        // If this is a different tuplet fraction, finalize the previous groups
+        if (currentTupletFraction && currentTupletFraction !== tupletFraction) {
+          // Finalize all remaining tuplets from previous fraction
+          if (currentTupletNotes.length > 0) {
+            createAndDrawTuplet(currentTupletNotes, currentTupletFraction);
+          }
+          currentTupletNotes = [];
+          notesPerGroup = 0;
+        }
+
+        // Set up new tuplet fraction
+        if (tupletFraction !== currentTupletFraction) {
+          currentTupletFraction = tupletFraction;
+          const fractionParts = tupletFraction.split('/');
+          if (fractionParts.length === 2) {
+            notesPerGroup = parseInt(fractionParts[0], 10);
+            if (isNaN(notesPerGroup)) {
+              notesPerGroup = 0;
+            }
+          }
+        }
+
+        currentTupletNotes.push(note);
+
+        // When we have enough notes for a group, create a tuplet
+        if (notesPerGroup > 0 && currentTupletNotes.length === notesPerGroup) {
+          createAndDrawTuplet(currentTupletNotes, currentTupletFraction!);
+          currentTupletNotes = [];
+        }
+      } else {
+        // If this note doesn't have tuplet fraction, finalize the current tuplet
+        if (currentTupletNotes.length > 0) {
+          createAndDrawTuplet(currentTupletNotes, currentTupletFraction!);
+        }
+        currentTupletNotes = [];
+        currentTupletFraction = null;
+        notesPerGroup = 0;
+      }
+    }
+
+    // Don't forget the last tuplet group
+    if (currentTupletNotes.length > 0) {
+      if (currentTupletFraction) {
+        createAndDrawTuplet(currentTupletNotes, currentTupletFraction);
+      }
+    }
   };
 
   /**
@@ -1534,32 +1808,10 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
     const [numBeats, beatValue] = staffTimeSignature.split('/').map(Number);
     
     const ticksPerBeat = Flow.durationToTicks(beatValue.toString());
-    const ticksPerMeasure = ticksPerBeat * numBeats;
     
     
-    // Calculate ticks for partial (pickup measure)
-    // If partial is specified (e.g., "8"), calculate how many ticks the pickup measure should have
-    let firstMeasureTicks = ticksPerMeasure; // Default: full measure
-    if (musicData.partial) {
-      // Parse partial duration (e.g., "8" -> eighth note, "4" -> quarter note, "8." -> dotted eighth)
-      const partialDuration = musicData.partial.replace(/\./g, ''); // Remove dots to get base duration
-      let partialTicks = Flow.durationToTicks(partialDuration);
-      
-      // If original had dots, multiply by 1.5 for each dot
-      const dotCount = (musicData.partial.match(/\./g) || []).length;
-      if (dotCount > 0) {
-        // Each dot adds half of the previous value
-        let multiplier = 1.0;
-        let added = 0.5;
-        for (let i = 0; i < dotCount; i++) {
-          multiplier += added;
-          added /= 2;
-        }
-        partialTicks = Math.floor(partialTicks * multiplier);
-      }
-      
-      firstMeasureTicks = partialTicks; // First measure should only have partial ticks
-    }
+    
+    
 
     // Determine notes to render for each staff
     // If staff has voices, keep them separate; otherwise use staff.notes
@@ -1589,14 +1841,41 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
       }
     });
 
-    // Convert notes for each staff and voice, tracking clef changes
+    // Convert notes for each staff and voice, tracking clef changes and ottava
     const keySignature = musicData.key_signature || 'C';
     const staffVexNotes = staffVoicesData.map((staffData, staffIdx) => 
-      staffData.voices.map((voiceData, voiceIdx) =>
-        voiceData.notes.map((note, noteIdx) => 
-          createVexFlowNote(note, staves[staffIdx].clef || 'treble', noteIdx, staffIdx)
-        )
-      )
+      staffData.voices.map((voiceData, voiceIdx) => {
+        let currentClef = staves[staffIdx].clef || 'treble';
+        let currentOttava = 0; // Track current ottava offset
+        return voiceData.notes.map((note, noteIdx) => {
+          // Update ottava if this note is an Ottava marker
+          if (note.note_type === 'Ottava' && note.ottava !== undefined) {
+            currentOttava = note.ottava;
+          }
+          
+          // Apply ottava offset to the note before creating VexFlow note
+          const noteToProcess = { ...note };
+          if (currentOttava !== 0 && note.note_type !== 'Ottava' && note.pitch && note.pitch !== 'r' && note.pitch !== 'R') {
+            // Apply ottava transposition to octave
+            // Note: In LilyPond, \ottava #1 means lower an octave (display lower), so we subtract
+            noteToProcess.octave = (noteToProcess.octave || 0) - currentOttava;
+            
+            // Also apply to chord notes if they exist
+            if (noteToProcess.chord_notes && noteToProcess.chord_notes.length > 0) {
+              noteToProcess.chord_notes = noteToProcess.chord_notes.map(([pitch, octave]) => 
+                [pitch, octave - currentOttava]
+              );
+            }
+          }
+          
+          const vexFlowNote = createVexFlowNote(noteToProcess, currentClef, noteIdx, staffIdx);
+          // Update clef if this note is a ClefNote
+          if (note.note_type === 'Clef' && note.clef) {
+            currentClef = note.clef;
+          }
+          return vexFlowNote;
+        });
+      })
     );
 
     // Build measures from backend measure data or fall back to frontend logic
@@ -1789,7 +2068,7 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
             if (measureIdx < voiceMeasures.length && voiceMeasures[measureIdx].length > 0) {
               // Filter out clef markers and time signature markers - they shouldn't be rendered as notes
               const measureNotes = voiceMeasures[measureIdx].filter((note: any) => 
-                !note._isClefMarker && !note._isTimeSignatureMarker && !note._isKeyMarker && !note._isOttavaMarker && !note._isRepeatStart && !note._isRepeatEnd && !note._isAlternative && !note._isAlternativeEnd
+                !note._isTimeSignatureMarker && !note._isKeyMarker && !note._isOttavaMarker && !note._isRepeatStart && !note._isRepeatEnd && !note._isAlternative && !note._isAlternativeEnd
               );
               
               if (measureNotes.length === 0) {
@@ -1807,7 +2086,6 @@ const MusicNotation: React.FC<MusicNotationProps> = ({ musicData, currentNoteInd
 
               
               let notesToRender = [...measureNotes];
-             
 
               const actualBeats = measureTicks / ticksPerBeat;
               // For first measure (pickup), use its actual beat count; for others use full beats or actual, whichever is smaller
